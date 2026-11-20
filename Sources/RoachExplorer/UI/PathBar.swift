@@ -79,6 +79,17 @@ final class PathBar: NSView, NSTextFieldDelegate {
         reloadSegments()
     }
 
+    /// The segment row scrolls sideways. A history swipe over it should scroll,
+    /// not go back.
+    func ownsSegmentScroller(_ view: NSView) -> Bool {
+        var current: NSView? = view
+        while let candidate = current {
+            if candidate === segmentScroll { return true }
+            current = candidate.superview
+        }
+        return false
+    }
+
     func setNavigation(canGoBack: Bool, canGoForward: Bool) {
         backButton.isEnabled = canGoBack
         forwardButton.isEnabled = canGoForward

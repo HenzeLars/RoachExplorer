@@ -14,6 +14,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var ignoreWatchUntil = Date.distantPast
     private var swipeMonitor: Any?
     private var lastSwipe = Date.distantPast
+    private var trackingSwipe = false
     /// A folder we just created. Escape deletes it. Return keeps it.
     private var creatingURL: URL?
     /// A second window, for "open all" of several folders. The app delegate sets this.
@@ -470,21 +471,67 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         watchSource = source
     }
 
-    /// Browser swipe: fingers move right to go back, left to go forward.
-    /// This is the system "Swipe between pages" gesture, so it does not steal
-    /// ordinary scrolling of the segment row. A 56 pt bar is a bad target, so
-    /// the same swipe works over the list too.
+    /// The scroll view asks up the responder chain. Yes means: when the list
+    /// is already at that edge, keep tracking the gesture as back/forward
+    /// instead of scrolling. In the middle, two fingers still scroll.
+    override func wantsScrollEventsForSwipeTracking(on axis: NSEvent.GestureAxis) -> Bool {
+        axis == .horizontal && NSEvent.isSwipeTrackingFromScrollEventsEnabled
+    }
+
+    /// Only events the scroll view forwarded, because it was at the edge.
+    /// A two-finger slide over a narrow list never gets here: the list scrolls.
+    override func scrollWheel(with event: NSEvent) {
+        guard event.phase == .began || event.phase == .changed,
+              !trackingSwipe,
+              !pathBar.isEditingField,
+              !fileTable.isEditingName,
+              NSEvent.isSwipeTrackingFromScrollEventsEnabled else {
+            super.scrollWheel(with: event)
+            return
+        }
+        let canBack = !backStack.isEmpty
+        let canForward = !forwardStack.isEmpty
+        guard canBack || canForward else {
+            super.scrollWheel(with: event)
+            return
+        }
+        trackingSwipe = true
+        event.trackSwipeEvent(
+            options: .lockDirection,
+            dampenAmountThresholdMin: canForward ? -1 : 0,
+            max: canBack ? 1 : 0
+        ) { [weak self] amount, phase, isComplete, stop in
+            guard let self else {
+                stop.pointee = true
+                return
+            }
+            if phase == .ended {
+                self.lastSwipe = Date()
+                if amount > 0 {
+                    self.goBack(nil)
+                } else if amount < 0 {
+                    self.goForward(nil)
+                }
+            }
+            if isComplete || phase == .ended || phase == .cancelled {
+                self.trackingSwipe = false
+            }
+        }
+    }
+
+    /// Three-finger swipe, for the setting that still sends a swipe event.
+    /// Fingers moving right goes back.
     private func installSwipeMonitor() {
         swipeMonitor = NSEvent.addLocalMonitorForEvents(matching: .swipe) { [weak self] event in
-            self?.handleSwipe(event)
+            self?.handleDiscreteSwipe(event)
             return event
         }
     }
 
-    private func handleSwipe(_ event: NSEvent) {
+    private func handleDiscreteSwipe(_ event: NSEvent) {
         guard event.window == window else { return }
-        if pathBar.isEditingField || fileTable.isEditingName { return }
-        if Date().timeIntervalSince(lastSwipe) < 0.4 { return }
+        guard !pathBar.isEditingField, !fileTable.isEditingName else { return }
+        guard Date().timeIntervalSince(lastSwipe) > 0.4 else { return }
         if event.deltaX > 0 {
             lastSwipe = Date()
             goBack(nil)
