@@ -95,6 +95,15 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         fileTable.onEditEnded = { [weak self] url, name, cancelled in
             self?.finishEdit(url: url, name: name, cancelled: cancelled)
         }
+        fileTable.onCancelCut = { [weak self] in
+            self?.cancelCut()
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clipboardChanged(_:)),
+            name: .fileClipboardChanged,
+            object: nil
+        )
         window.initialFirstResponder = fileTable
         installSwipeMonitor()
 
@@ -197,6 +206,10 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             return !pathBar.isEditingField && !fileTable.isEditingName
         case #selector(renameSelection(_:)):
             return !pathBar.isEditingField && !fileTable.isEditingName && fileTable.rowForRename >= 0
+        case #selector(NSText.cut(_:)), #selector(NSText.copy(_:)):
+            return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
+        case #selector(NSText.paste(_:)):
+            return !pathBar.isEditingField && !fileTable.isEditingName && FileClipboard.shared.canPaste
         default:
             return true
         }
@@ -248,6 +261,141 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         var number = 2
         while taken.contains("untitled\(number)") { number += 1 }
         return "untitled\(number)"
+    }
+
+    @objc func cut(_ sender: Any?) {
+        let urls = fileTable.selectedItems.map(\.url)
+        guard !urls.isEmpty else { return }
+        FileClipboard.shared.write(urls, kind: .move)
+        refreshCutAppearance()
+    }
+
+    @objc func copy(_ sender: Any?) {
+        let urls = fileTable.selectedItems.map(\.url)
+        guard !urls.isEmpty else { return }
+        FileClipboard.shared.write(urls, kind: .copy)
+        refreshCutAppearance()
+    }
+
+    @objc func paste(_ sender: Any?) {
+        guard let currentURL, let clip = FileClipboard.shared.current() else { return }
+        let transfer = FileTransfer()
+        let progress = TransferProgress()
+        progress.onCancel = { transfer.cancel() }
+        progress.onDecide = { [weak self] in
+            self?.askCollision(named: nil) { choice in
+                if let choice { transfer.decide(choice) }
+            }
+        }
+        let title = clip.kind == .move ? "Moving" : "Copying"
+        var showed = false
+        let reveal = DispatchWorkItem {
+            progress.show(title: title)
+            showed = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: reveal)
+        transfer.onProgress = { name, index, total in
+            DispatchQueue.main.async {
+                progress.update(name: name, index: index, total: total)
+            }
+        }
+        transfer.onCollision = { [weak self] name in
+            var choice = CollisionChoice.skip
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.main.async {
+                self?.askCollision(named: name) { answer in
+                    choice = answer ?? .skip
+                    if answer != nil, self?.applyToAll == true {
+                        transfer.decide(choice)
+                    }
+                    done.signal()
+                }
+            }
+            done.wait()
+            return choice
+        }
+        let kind = clip.kind
+        let sources = clip.urls
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer {
+                reveal.cancel()
+                DispatchQueue.main.async {
+                    progress.close()
+                    self?.refreshCutAppearance()
+                    self?.reload(nil)
+                }
+            }
+            do {
+                _ = try transfer.run(sources: sources, kind: kind, into: currentURL)
+            } catch TransferError.cancelled {
+                // Stopped. What already moved stays moved.
+            } catch {
+                DispatchQueue.main.async { self?.present(error) }
+            }
+            if kind == .move {
+                let moved = transfer.movedSources
+                DispatchQueue.main.async {
+                    self?.finishMove(moved: moved, from: sources)
+                }
+            }
+        }
+    }
+
+    private var applyToAll = false
+
+    private func askCollision(named name: String?, chosen: @escaping (CollisionChoice?) -> Void) {
+        guard let window else {
+            chosen(nil)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = name.map { "\($0) already exists." } ?? "For the remaining items"
+        alert.informativeText = "Replace, keep both, or skip."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Keep Both")
+        alert.addButton(withTitle: "Skip")
+        alert.buttons[0].keyEquivalent = ""
+        alert.buttons[1].keyEquivalent = "\r"
+        let checkbox = NSButton(checkboxWithTitle: "Apply to All", target: nil, action: nil)
+        checkbox.state = .on
+        alert.accessoryView = checkbox
+        alert.beginSheetModal(for: window) { [weak self] response in
+            self?.applyToAll = checkbox.state == .on
+            switch response {
+            case .alertFirstButtonReturn: chosen(.replace)
+            case .alertSecondButtonReturn: chosen(.keepBoth)
+            default: chosen(.skip)
+            }
+        }
+    }
+
+    private func finishMove(moved: [URL], from sources: [URL]) {
+        let left = sources.filter { source in
+            !moved.contains { sameFile($0, source) }
+        }
+        if left.isEmpty {
+            FileClipboard.shared.clearCut()
+        } else {
+            FileClipboard.shared.write(left, kind: .move)
+        }
+        refreshCutAppearance()
+    }
+
+    private func cancelCut() {
+        FileClipboard.shared.clearCut()
+        refreshCutAppearance()
+    }
+
+    @objc private func clipboardChanged(_ notification: Notification) {
+        refreshCutAppearance()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        refreshCutAppearance()
+    }
+
+    private func refreshCutAppearance() {
+        fileTable.cutPaths = FileClipboard.shared.cutPaths
     }
 
     /// F2, Cmd+Return, or the context menu. The stem is selected. The extension is not.

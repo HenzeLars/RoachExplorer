@@ -90,10 +90,21 @@ final class FileTable: NSTableView {
         return result.takeUnretainedValue() as! CharacterSet
     }()
 
+    /// Paths of rows that are cut, so they dim until paste or Escape.
+    var cutPaths: Set<String> = [] {
+        didSet {
+            if cutPaths != oldValue { reloadData() }
+        }
+    }
+
+    /// Escape also cancels a pending cut. The window clears the clipboard mark.
+    var onCancelCut: (() -> Void)?
+
     /// Escape clears the selection. Plain characters are type-ahead.
     /// Everything else (arrows, Shift+arrows, Cmd+A) is the table's own behavior.
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
+            onCancelCut?()
             deselectAll(nil)
             return
         }
@@ -179,10 +190,17 @@ final class FileTable: NSTableView {
         let menu = NSMenu()
         if clicked >= 0 {
             menu.addItem(withTitle: "Open", action: #selector(WindowController.openSelection(_:)), keyEquivalent: "")
+            menu.addItem(.separator())
+        }
+        menu.addItem(withTitle: "New Folder", action: #selector(WindowController.newFolder(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "New File", action: #selector(WindowController.newFile(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
+        if clicked >= 0 {
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Rename", action: #selector(WindowController.renameSelection(_:)), keyEquivalent: "")
-        } else {
-            menu.addItem(withTitle: "New Folder", action: #selector(WindowController.newFolder(_:)), keyEquivalent: "")
-            menu.addItem(withTitle: "New File", action: #selector(WindowController.newFile(_:)), keyEquivalent: "")
         }
         return menu
     }
@@ -375,7 +393,14 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
             }
             cell = textCell
         }
-        cell.alphaValue = item.isHidden ? 0.5 : 1
+        let cut = cutPaths.contains(item.url.standardizedFileURL.path)
+        if cut {
+            cell.alphaValue = 0.4
+            cell.setAccessibilityHelp("Cut")
+        } else {
+            cell.alphaValue = item.isHidden ? 0.5 : 1
+            cell.setAccessibilityHelp(nil)
+        }
         return cell
     }
 
