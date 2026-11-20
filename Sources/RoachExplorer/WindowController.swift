@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 final class WindowController: NSWindowController, NSWindowDelegate {
     private let fileTable = FileTable(frame: .zero)
@@ -6,6 +7,10 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private let statusBar = StatusBarView(frame: .zero)
     private let statusBarHeight: CGFloat = 24
     private var currentURL: URL?
+    private var backStack: [URL] = []
+    private var forwardStack: [URL] = []
+    private var watchSource: DispatchSourceFileSystemObject?
+    private var reloadScheduled = false
 
     init(startingURL: URL?) {
         let settings = SettingsStore.load()
@@ -56,6 +61,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         pathBar.onNavigate = { [weak self] url in
             self?.show(folder: url)
         }
+        pathBar.onBack = { [weak self] in self?.goBack(nil) }
+        pathBar.onForward = { [weak self] in self?.goForward(nil) }
+        pathBar.onReload = { [weak self] in self?.reload(nil) }
         pathBar.onFinishEditing = { [weak self] in
             guard let self else { return }
             self.window?.makeFirstResponder(self.fileTable)
@@ -75,7 +83,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             window.center()
         }
 
-        show(folder: resolveStartURL(override: startingURL, settings: settings))
+        show(folder: resolveStartURL(override: startingURL, settings: settings), remember: false)
     }
 
     @available(*, unavailable)
@@ -97,17 +105,122 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         return fileManager.homeDirectoryForCurrentUser
     }
 
-    func show(folder url: URL) {
-        fileTable.items = FileSystem.listItems(in: url)
-        currentURL = url
-        window?.title = url.lastPathComponent
-        pathBar.show(url: url)
+    /// The folder this window is showing. A new window starts here.
+    var currentFolder: URL? { currentURL }
+
+    /// `remember` is false for back, forward, reload-into-a-missing-folder, and the
+    /// first show. A vanished folder is replaced by the nearest parent that exists.
+    func show(folder url: URL, remember: Bool = true) {
+        let destination = nearestExistingAncestor(of: url)
+        if remember, let current = currentURL, current != destination {
+            backStack.append(current)
+            forwardStack.removeAll()
+        }
+        while backStack.last == destination {
+            backStack.removeLast()
+        }
+        fileTable.items = FileSystem.listItems(in: destination)
+        currentURL = destination
+        window?.title = destination.path == "/" ? "/" : destination.lastPathComponent
+        pathBar.show(url: destination)
         updateStatusBar()
+        pathBar.setNavigation(canGoBack: !backStack.isEmpty, canGoForward: !forwardStack.isEmpty)
+        watch(destination)
+    }
+
+    @objc func goBack(_ sender: Any?) {
+        guard let current = currentURL, let previous = backStack.popLast() else { return }
+        forwardStack.append(current)
+        show(folder: previous, remember: false)
+    }
+
+    @objc func goForward(_ sender: Any?) {
+        guard let current = currentURL, let next = forwardStack.popLast() else { return }
+        backStack.append(current)
+        show(folder: next, remember: false)
+    }
+
+    /// Cmd+Up. The root has no parent.
+    @objc func goUp(_ sender: Any?) {
+        guard let current = currentURL?.standardizedFileURL else { return }
+        let parent = current.deletingLastPathComponent().standardizedFileURL
+        if parent == current { return }
+        show(folder: parent)
+    }
+
+    /// Cmd+R, and the folder watcher. Selection survives: the table reselects by URL.
+    @objc func reload(_ sender: Any?) {
+        guard let currentURL else { return }
+        if !isExistingDirectory(currentURL) {
+            show(folder: currentURL, remember: false)
+            return
+        }
+        fileTable.items = FileSystem.listItems(in: currentURL)
+        updateStatusBar()
+    }
+
+    @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(goBack(_:)):
+            return !backStack.isEmpty
+        case #selector(goForward(_:)):
+            return !forwardStack.isEmpty
+        case #selector(goUp(_:)):
+            return currentURL?.standardizedFileURL.path != "/"
+        default:
+            return true
+        }
     }
 
     /// Cmd+L. The field is already on screen; this only focuses it.
     @objc func focusPath(_ sender: Any?) {
         pathBar.focusField()
+    }
+
+    private func nearestExistingAncestor(of url: URL) -> URL {
+        var candidate = url.standardizedFileURL
+        if isExistingDirectory(candidate) { return candidate }
+        while candidate.path != "/" {
+            candidate = candidate.deletingLastPathComponent().standardizedFileURL
+            if isExistingDirectory(candidate) { return candidate }
+        }
+        let root = URL(fileURLWithPath: "/")
+        if isExistingDirectory(root) { return root }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private func isExistingDirectory(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    private func watch(_ url: URL) {
+        watchSource?.cancel()
+        watchSource = nil
+        let fd = Darwin.open(url.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .delete, .rename, .revoke],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            self?.scheduleReload()
+        }
+        source.setCancelHandler {
+            Darwin.close(fd)
+        }
+        source.resume()
+        watchSource = source
+    }
+
+    private func scheduleReload() {
+        if reloadScheduled { return }
+        reloadScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.reloadScheduled = false
+            self?.reload(nil)
+        }
     }
 
     /// "12 items", or "12 items, 3 selected, 4 KB" with a selection.
@@ -126,6 +239,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        watchSource?.cancel()
+        watchSource = nil
         guard let window, let currentURL else { return }
         var settings = SettingsStore.load()
         settings.lastPath = currentURL.path

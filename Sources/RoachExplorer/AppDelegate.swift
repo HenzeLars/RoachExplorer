@@ -12,7 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newWindow(_ sender: Any?) {
-        openWindow(startingAt: nil)
+        let current = (NSApp.keyWindow?.windowController as? WindowController)?.currentFolder
+        openWindow(startingAt: current)
     }
 
     func openWindow(startingAt url: URL?) {
@@ -50,6 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Roach Explorer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
+        // File menu.
+        let fileItem = NSMenuItem()
+        mainMenu.addItem(fileItem)
+        let fileMenu = NSMenu(title: "File")
+        fileItem.submenu = fileMenu
+        fileMenu.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
+
         // Edit menu. Standard text actions, routed through the responder chain.
         // Undo and Redo are intentionally absent: Cmd+Z belongs to the later in-app undo, and until then it does nothing.
         let editItem = NSMenuItem()
@@ -67,6 +75,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(goItem)
         let goMenu = NSMenu(title: "Go")
         goItem.submenu = goMenu
+        goMenu.addItem(withTitle: "Back", action: #selector(WindowController.goBack(_:)), keyEquivalent: "[")
+        goMenu.addItem(withTitle: "Forward", action: #selector(WindowController.goForward(_:)), keyEquivalent: "]")
+        let up = goMenu.addItem(
+            withTitle: "Enclosing Folder",
+            action: #selector(WindowController.goUp(_:)),
+            keyEquivalent: "\u{F700}"
+        )
+        up.keyEquivalentModifierMask = .command
+        goMenu.addItem(withTitle: "Reload", action: #selector(WindowController.reload(_:)), keyEquivalent: "r")
+        goMenu.addItem(.separator())
         goMenu.addItem(withTitle: "Path", action: #selector(WindowController.focusPath(_:)), keyEquivalent: "l")
 
         // Window menu.

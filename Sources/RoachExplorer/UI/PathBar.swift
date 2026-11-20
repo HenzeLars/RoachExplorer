@@ -9,7 +9,13 @@ final class PathBar: NSView, NSTextFieldDelegate {
     var onNavigate: ((URL) -> Void)?
     /// Editing finished (Escape, or a click that left the field). Focus the list.
     var onFinishEditing: (() -> Void)?
+    var onBack: (() -> Void)?
+    var onForward: (() -> Void)?
+    var onReload: (() -> Void)?
 
+    private let backButton = NSButton()
+    private let forwardButton = NSButton()
+    private let reloadButton = NSButton()
     private let field = NSTextField(frame: .zero)
     private let segmentScroll = NSScrollView(frame: .zero)
     private let segmentDocument = NSView(frame: .zero)
@@ -42,6 +48,11 @@ final class PathBar: NSView, NSTextFieldDelegate {
             cell.lineBreakMode = .byTruncatingHead
         }
         addSubview(field)
+        configure(backButton, symbol: "chevron.backward", label: "Back", action: #selector(backClicked(_:)))
+        configure(forwardButton, symbol: "chevron.forward", label: "Forward", action: #selector(forwardClicked(_:)))
+        configure(reloadButton, symbol: "arrow.clockwise", label: "Reload", action: #selector(reloadClicked(_:)))
+        backButton.isEnabled = false
+        forwardButton.isEnabled = false
 
         segmentScroll.drawsBackground = false
         segmentScroll.borderType = .noBorder
@@ -68,6 +79,11 @@ final class PathBar: NSView, NSTextFieldDelegate {
         reloadSegments()
     }
 
+    func setNavigation(canGoBack: Bool, canGoForward: Bool) {
+        backButton.isEnabled = canGoBack
+        forwardButton.isEnabled = canGoForward
+    }
+
     /// Cmd+L. Selects the whole path, so typing replaces it.
     func focusField() {
         window?.makeFirstResponder(field)
@@ -92,11 +108,36 @@ final class PathBar: NSView, NSTextFieldDelegate {
 
     override func layout() {
         super.layout()
-        field.frame = NSRect(x: 8, y: bounds.height - 30, width: max(0, bounds.width - 16), height: 22)
-        segmentScroll.frame = NSRect(x: 0, y: 2, width: bounds.width, height: 24)
+        let navWidth: CGFloat = 26
+        let navY = bounds.height - 30
+        backButton.frame = NSRect(x: 8, y: navY, width: navWidth, height: 22)
+        forwardButton.frame = NSRect(x: 8 + navWidth, y: navY, width: navWidth, height: 22)
+        reloadButton.frame = NSRect(x: 8 + navWidth * 2, y: navY, width: navWidth, height: 22)
+        let fieldX = 8 + navWidth * 3 + 6
+        field.frame = NSRect(x: fieldX, y: navY, width: max(0, bounds.width - fieldX - 8), height: 22)
+        // Segments line up with the text, not with the buttons.
+        segmentScroll.frame = NSRect(x: fieldX - 8, y: 2, width: max(0, bounds.width - (fieldX - 8)), height: 24)
         scrollSegmentsToEnd()
         positionCompletion()
     }
+
+    private func configure(_ button: NSButton, symbol: String, label: String, action: Selector) {
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        button.title = label
+        button.imagePosition = .imageOnly
+        button.bezelStyle = .recessed
+        button.setButtonType(.momentaryPushIn)
+        button.controlSize = .small
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.target = self
+        button.action = action
+        addSubview(button)
+    }
+
+    @objc private func backClicked(_ sender: Any?) { onBack?() }
+    @objc private func forwardClicked(_ sender: Any?) { onForward?() }
+    @objc private func reloadClicked(_ sender: Any?) { onReload?() }
 
     override func viewWillStartLiveResize() {
         super.viewWillStartLiveResize()
