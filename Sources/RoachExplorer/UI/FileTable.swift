@@ -182,6 +182,7 @@ final class FileTable: NSTableView {
             menu.addItem(withTitle: "Rename", action: #selector(WindowController.renameSelection(_:)), keyEquivalent: "")
         } else {
             menu.addItem(withTitle: "New Folder", action: #selector(WindowController.newFolder(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "New File", action: #selector(WindowController.newFile(_:)), keyEquivalent: "")
         }
         return menu
     }

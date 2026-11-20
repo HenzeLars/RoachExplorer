@@ -12,6 +12,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var watchSource: DispatchSourceFileSystemObject?
     private var reloadScheduled = false
     private var ignoreWatchUntil = Date.distantPast
+    private var swipeMonitor: Any?
+    private var lastSwipe = Date.distantPast
     /// A folder we just created. Escape deletes it. Return keeps it.
     private var creatingURL: URL?
     /// A second window, for "open all" of several folders. The app delegate sets this.
@@ -93,6 +95,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             self?.finishEdit(url: url, name: name, cancelled: cancelled)
         }
         window.initialFirstResponder = fileTable
+        installSwipeMonitor()
 
         if let frame = settings.windowFrame {
             window.setFrame(
@@ -189,7 +192,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             return currentURL?.standardizedFileURL.path != "/"
         case #selector(openSelection(_:)), #selector(openFocusedFolder(_:)):
             return !pathBar.isEditingField && !fileTable.isEditingName
-        case #selector(newFolder(_:)):
+        case #selector(newFolder(_:)), #selector(newFile(_:)):
             return !pathBar.isEditingField && !fileTable.isEditingName
         case #selector(renameSelection(_:)):
             return !pathBar.isEditingField && !fileTable.isEditingName && fileTable.rowForRename >= 0
@@ -210,12 +213,40 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             present(error)
             return
         }
+        revealForEditing(url, name: name)
+    }
+
+    /// Empty file, same edit as a new folder. Return keeps it. Escape deletes it.
+    @objc func newFile(_ sender: Any?) {
+        guard let currentURL else { return }
+        let name = untitledName(avoiding: fileTable.items.map(\.name))
+        let url = currentURL.appendingPathComponent(name)
+        do {
+            try Data().write(to: url, options: .withoutOverwriting)
+        } catch {
+            present(error)
+            return
+        }
+        revealForEditing(url, name: name)
+    }
+
+    private func revealForEditing(_ url: URL, name: String) {
+        guard let currentURL else { return }
         ignoreWatchUntil = Date().addingTimeInterval(0.6)
         creatingURL = url
         fileTable.items = FileSystem.listItems(in: currentURL)
         updateStatusBar()
         guard let row = fileTable.items.firstIndex(where: { $0.name == name }) else { return }
         fileTable.beginEditing(row: row, selectingAll: true)
+    }
+
+    /// `untitled`, then `untitled2`, and so on.
+    private func untitledName(avoiding existing: [String]) -> String {
+        let taken = Set(existing.map { $0.lowercased() })
+        if !taken.contains("untitled") { return "untitled" }
+        var number = 2
+        while taken.contains("untitled\(number)") { number += 1 }
+        return "untitled\(number)"
     }
 
     /// F2, Cmd+Return, or the context menu. The stem is selected. The extension is not.
@@ -439,6 +470,30 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         watchSource = source
     }
 
+    /// Browser swipe: fingers move right to go back, left to go forward.
+    /// This is the system "Swipe between pages" gesture, so it does not steal
+    /// ordinary scrolling of the segment row. A 56 pt bar is a bad target, so
+    /// the same swipe works over the list too.
+    private func installSwipeMonitor() {
+        swipeMonitor = NSEvent.addLocalMonitorForEvents(matching: .swipe) { [weak self] event in
+            self?.handleSwipe(event)
+            return event
+        }
+    }
+
+    private func handleSwipe(_ event: NSEvent) {
+        guard event.window == window else { return }
+        if pathBar.isEditingField || fileTable.isEditingName { return }
+        if Date().timeIntervalSince(lastSwipe) < 0.4 { return }
+        if event.deltaX > 0 {
+            lastSwipe = Date()
+            goBack(nil)
+        } else if event.deltaX < 0 {
+            lastSwipe = Date()
+            goForward(nil)
+        }
+    }
+
     private func scheduleReload() {
         if Date() < ignoreWatchUntil || fileTable.isEditingName { return }
         if reloadScheduled { return }
@@ -467,6 +522,10 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         watchSource?.cancel()
         watchSource = nil
+        if let swipeMonitor {
+            NSEvent.removeMonitor(swipeMonitor)
+            self.swipeMonitor = nil
+        }
         guard let window, let currentURL else { return }
         var settings = SettingsStore.load()
         settings.lastPath = currentURL.path
