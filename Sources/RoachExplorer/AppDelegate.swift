@@ -60,6 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         fileItem.submenu = fileMenu
         fileMenu.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
+        fileMenu.addItem(withTitle: "New Folder", action: #selector(WindowController.newFolder(_:)), keyEquivalent: "N")
+        let rename = fileMenu.addItem(
+            withTitle: "Rename",
+            action: #selector(WindowController.renameSelection(_:)),
+            keyEquivalent: "\u{F705}"
+        )
+        rename.keyEquivalentModifierMask = []
         fileMenu.addItem(withTitle: "Open", action: #selector(WindowController.openSelection(_:)), keyEquivalent: "o")
         let openFolder = fileMenu.addItem(
             withTitle: "Open Folder",

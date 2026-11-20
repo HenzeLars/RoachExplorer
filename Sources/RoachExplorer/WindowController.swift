@@ -11,6 +11,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var forwardStack: [URL] = []
     private var watchSource: DispatchSourceFileSystemObject?
     private var reloadScheduled = false
+    private var ignoreWatchUntil = Date.distantPast
+    /// A folder we just created. Escape deletes it. Return keeps it.
+    private var creatingURL: URL?
     /// A second window, for "open all" of several folders. The app delegate sets this.
     var onOpenWindow: ((URL) -> Void)?
 
@@ -79,6 +82,15 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
         fileTable.onOpenSelection = { [weak self] option in
             self?.openSelection(option: option)
+        }
+        fileTable.onRename = { [weak self] in
+            self?.renameSelection(nil)
+        }
+        fileTable.onCanCommitEdit = { [weak self] url, name in
+            self?.canCommit(url: url, name: name) ?? true
+        }
+        fileTable.onEditEnded = { [weak self] url, name, cancelled in
+            self?.finishEdit(url: url, name: name, cancelled: cancelled)
         }
         window.initialFirstResponder = fileTable
 
@@ -176,10 +188,123 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         case #selector(goUp(_:)):
             return currentURL?.standardizedFileURL.path != "/"
         case #selector(openSelection(_:)), #selector(openFocusedFolder(_:)):
-            return !pathBar.isEditingField
+            return !pathBar.isEditingField && !fileTable.isEditingName
+        case #selector(newFolder(_:)):
+            return !pathBar.isEditingField && !fileTable.isEditingName
+        case #selector(renameSelection(_:)):
+            return !pathBar.isEditingField && !fileTable.isEditingName && fileTable.rowForRename >= 0
         default:
             return true
         }
+    }
+
+    /// Cmd+Shift+N. The cockroach name is selected, so typing replaces it.
+    /// Return keeps the folder. Escape deletes it. A second Return enters it.
+    @objc func newFolder(_ sender: Any?) {
+        guard let currentURL else { return }
+        let name = CockroachName.next(avoiding: fileTable.items.map(\.name))
+        let url = currentURL.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        } catch {
+            present(error)
+            return
+        }
+        ignoreWatchUntil = Date().addingTimeInterval(0.6)
+        creatingURL = url
+        fileTable.items = FileSystem.listItems(in: currentURL)
+        updateStatusBar()
+        guard let row = fileTable.items.firstIndex(where: { $0.name == name }) else { return }
+        fileTable.beginEditing(row: row, selectingAll: true)
+    }
+
+    /// F2, Cmd+Return, or the context menu. The stem is selected. The extension is not.
+    @objc func renameSelection(_ sender: Any?) {
+        let row = fileTable.rowForRename
+        guard row >= 0 else { return }
+        fileTable.beginEditing(row: row, selectingAll: false)
+    }
+
+    /// False keeps the editor open. A taken name flashes that row instead of an alert.
+    private func canCommit(url: URL, name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "." || trimmed == ".." { return true }
+        if trimmed.compare(url.lastPathComponent, options: .caseInsensitive) == .orderedSame,
+           trimmed == url.lastPathComponent {
+            return true
+        }
+        guard let row = conflictingRow(named: trimmed, except: url) else { return true }
+        fileTable.flash(row: row)
+        NSSound.beep()
+        return false
+    }
+
+    private func finishEdit(url: URL, name: String, cancelled: Bool) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cancelled || trimmed.isEmpty || trimmed == "." || trimmed == ".." {
+            abandonCreate(url)
+            return
+        }
+        if trimmed == url.lastPathComponent {
+            creatingURL = nil
+            return
+        }
+        if conflictingRow(named: trimmed, except: url) != nil {
+            // Click-away. The editor is already gone, so open it again on the typed name.
+            if let row = conflictingRow(named: trimmed, except: url) {
+                fileTable.flash(row: row)
+                NSSound.beep()
+            }
+            if let row = fileTable.items.firstIndex(where: { $0.url == url }) {
+                DispatchQueue.main.async { [weak self] in
+                    self?.fileTable.beginEditing(row: row, selectingAll: true, text: trimmed)
+                }
+            }
+            return
+        }
+        let destination = url.deletingLastPathComponent().appendingPathComponent(trimmed)
+        ignoreWatchUntil = Date().addingTimeInterval(0.6)
+        do {
+            try FileManager.default.moveItem(at: url, to: destination)
+        } catch {
+            abandonCreate(url)
+            present(error)
+            return
+        }
+        creatingURL = nil
+        guard let currentURL else { return }
+        fileTable.items = FileSystem.listItems(in: currentURL)
+        updateStatusBar()
+        if let row = fileTable.items.firstIndex(where: { $0.name == trimmed }) {
+            fileTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            fileTable.scrollRowToVisible(row)
+        }
+    }
+
+    private func conflictingRow(named name: String, except url: URL) -> Int? {
+        fileTable.items.firstIndex {
+            !sameFile($0.url, url) && $0.name.compare(name, options: .caseInsensitive) == .orderedSame
+        }
+    }
+
+    private func sameFile(_ a: URL, _ b: URL) -> Bool {
+        a.standardizedFileURL.path == b.standardizedFileURL.path
+    }
+
+    private func abandonCreate(_ url: URL) {
+        guard let creating = creatingURL, sameFile(creating, url) else { return }
+        creatingURL = nil
+        ignoreWatchUntil = Date().addingTimeInterval(0.6)
+        try? FileManager.default.removeItem(at: url)
+        guard let currentURL else { return }
+        fileTable.items = FileSystem.listItems(in: currentURL)
+        updateStatusBar()
+    }
+
+    private func present(_ error: Error) {
+        guard let window else { return }
+        let alert = NSAlert(error: error)
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
     /// Double-click. Only the clicked row, even if others are selected.
@@ -315,6 +440,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func scheduleReload() {
+        if Date() < ignoreWatchUntil || fileTable.isEditingName { return }
         if reloadScheduled { return }
         reloadScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in

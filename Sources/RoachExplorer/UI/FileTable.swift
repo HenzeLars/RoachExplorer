@@ -9,6 +9,12 @@ final class FileTable: NSTableView {
     var onOpenRow: ((Int, Bool) -> Void)?
     /// Return or Enter. Option asks to run a file that has no default app.
     var onOpenSelection: ((Bool) -> Void)?
+    /// F2 or Cmd+Return.
+    var onRename: (() -> Void)?
+    /// Return or click-away wants to keep `name`. False means stay in the editor.
+    var onCanCommitEdit: ((URL, String) -> Bool)?
+    /// Editing ended. `cancelled` is Escape. Click-away and Return are not cancelled.
+    var onEditEnded: ((URL, String, Bool) -> Void)?
 
     var items: [FileItem] = [] {
         didSet {
@@ -36,6 +42,11 @@ final class FileTable: NSTableView {
 
     private var typeAheadBuffer = ""
     private var lastTypeAhead: Date?
+    private var pendingRename: DispatchWorkItem?
+    private var editingURL: URL?
+    private var editCancelled = false
+    /// Right-clicked row, so Rename hits that row and not whichever was focused.
+    private var contextRow: Int?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -86,7 +97,13 @@ final class FileTable: NSTableView {
             deselectAll(nil)
             return
         }
-        // Return opens. Cmd+Return is rename, later, so it is left alone.
+        // F2, and Cmd+Return. Plain Return opens, so this has to come first.
+        if event.keyCode == 122
+            || (event.keyCode == 36 && event.modifierFlags.contains(.command)
+                && event.modifierFlags.intersection([.option, .control, .shift]).isEmpty) {
+            onRename?()
+            return
+        }
         // Keypad Enter is 76. Option+Return is "run in Terminal" for a file
         // with no default app; the window decides.
         if (event.keyCode == 36 || event.keyCode == 76),
@@ -118,20 +135,150 @@ final class FileTable: NSTableView {
     }
 
     @objc private func openClickedRow(_ sender: Any?) {
+        cancelPendingRename()
         let row = clickedRow
         guard row >= 0 else { return }
         let option = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
         onOpenRow?(row, option)
     }
 
-    /// A click below the last row clears the selection.
+    /// A click below the last row clears the selection. A slow second click
+    /// on the name of the already-selected row starts a rename. A double-click
+    /// opens, and cancels that.
     override func mouseDown(with event: NSEvent) {
+        cancelPendingRename()
         let point = convert(event.locationInWindow, from: nil)
-        if row(at: point) < 0 {
+        let clicked = row(at: point)
+        if clicked < 0 {
             deselectAll(nil)
             return
         }
+        if event.clickCount > 1 {
+            super.mouseDown(with: event)
+            return
+        }
+        let wasOnlySelection = selectedRowIndexes == IndexSet(integer: clicked)
+        let onName = isNameClick(point, row: clicked)
         super.mouseDown(with: event)
+        if wasOnlySelection, onName {
+            let work = DispatchWorkItem { [weak self] in
+                self?.beginEditing(row: clicked, selectingAll: false)
+            }
+            pendingRename = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+        }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let clicked = row(at: point)
+        contextRow = clicked >= 0 ? clicked : nil
+        if clicked >= 0, !selectedRowIndexes.contains(clicked) {
+            selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
+        }
+        let menu = NSMenu()
+        if clicked >= 0 {
+            menu.addItem(withTitle: "Open", action: #selector(WindowController.openSelection(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Rename", action: #selector(WindowController.renameSelection(_:)), keyEquivalent: "")
+        } else {
+            menu.addItem(withTitle: "New Folder", action: #selector(WindowController.newFolder(_:)), keyEquivalent: "")
+        }
+        return menu
+    }
+
+    var isEditingName: Bool { editingURL != nil }
+
+    /// The row Rename should use: the right-clicked one, else the focused one.
+    var rowForRename: Int {
+        if let contextRow, contextRow >= 0 {
+            return contextRow
+        }
+        return selectedRow
+    }
+
+    func beginEditing(row: Int, selectingAll: Bool, text: String? = nil) {
+        guard row >= 0, row < items.count else { return }
+        cancelPendingRename()
+        scrollRowToVisible(row)
+        selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        let column = self.column(withIdentifier: NSUserInterfaceItemIdentifier("Name"))
+        guard column >= 0,
+              let cell = view(atColumn: column, row: row, makeIfNecessary: true) as? NameCellView,
+              let field = cell.textField else { return }
+        cell.prepareForEditing()
+        if let text { field.stringValue = text }
+        field.delegate = self
+        editingURL = items[row].url
+        editCancelled = false
+        window?.makeFirstResponder(field)
+        let name = field.stringValue
+        let range = selectingAll ? NSRange(location: 0, length: (name as NSString).length) : Self.stemRange(of: name)
+        field.currentEditor()?.selectedRange = range
+        DispatchQueue.main.async {
+            field.currentEditor()?.selectedRange = range
+        }
+    }
+
+    /// The row that already has this name. Two red pulses, so the clash is obvious
+    /// without a dialog covering it.
+    func flash(row: Int) {
+        guard row >= 0, row < numberOfRows else { return }
+        let rect = rect(ofRow: row)
+        if !visibleRect.intersects(rect) {
+            scrollRowToVisible(row)
+        }
+        guard let rowView = rowView(atRow: row, makeIfNecessary: true) else { return }
+        rowView.setAccessibilityLabel("Name already used")
+        let overlay = NSView(frame: rowView.bounds)
+        overlay.autoresizingMask = [.width, .height]
+        overlay.wantsLayer = true
+        overlay.layer?.backgroundColor = NSColor.systemRed.cgColor
+        overlay.alphaValue = 0
+        rowView.addSubview(overlay)
+        pulse(overlay, remaining: 2) {
+            overlay.removeFromSuperview()
+            rowView.setAccessibilityLabel(nil)
+        }
+    }
+
+    private func pulse(_ view: NSView, remaining: Int, done: @escaping () -> Void) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            view.animator().alphaValue = 0.55
+        } completionHandler: {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                view.animator().alphaValue = 0
+            } completionHandler: {
+                if remaining > 1 {
+                    self.pulse(view, remaining: remaining - 1, done: done)
+                } else {
+                    done()
+                }
+            }
+        }
+    }
+
+    private func cancelPendingRename() {
+        pendingRename?.cancel()
+        pendingRename = nil
+    }
+
+    private func isNameClick(_ point: NSPoint, row: Int) -> Bool {
+        let column = self.column(at: point)
+        guard column >= 0, tableColumns[column].identifier.rawValue == "Name" else { return false }
+        let rect = frameOfCell(atColumn: column, row: row)
+        return point.x > rect.minX + 24
+    }
+
+    /// `notes.md` selects `notes`. `.env` has no extension. The extension stays editable.
+    static func stemRange(of name: String) -> NSRange {
+        let ns = name as NSString
+        let dot = ns.range(of: ".", options: .backwards)
+        if dot.location == NSNotFound || dot.location == 0 {
+            return NSRange(location: 0, length: ns.length)
+        }
+        return NSRange(location: 0, length: dot.location)
     }
 
     /// Keep the table at least as tall as the clip view, so clicks on the
@@ -153,6 +300,50 @@ final class FileTable: NSTableView {
         image.size = NSSize(width: 16, height: 16)
         iconCache.setObject(image, forKey: key)
         return image
+    }
+}
+
+extension FileTable: NSTextFieldDelegate {
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            commitEdit()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            cancelEdit()
+            return true
+        }
+        return false
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let url = editingURL else { return }
+        let field = obj.object as? NSTextField
+        let name = field?.stringValue ?? ""
+        let cancelled = editCancelled
+        editingURL = nil
+        editCancelled = false
+        if cancelled {
+            field?.stringValue = url.lastPathComponent
+        }
+        field?.isEditable = false
+        field?.isSelectable = false
+        onEditEnded?(url, name, cancelled)
+    }
+
+    private func commitEdit() {
+        guard let url = editingURL, let editor = window?.firstResponder as? NSTextView else { return }
+        if onCanCommitEdit?(url, editor.string) == false { return }
+        window?.makeFirstResponder(self)
+    }
+
+    private func cancelEdit() {
+        editCancelled = true
+        window?.makeFirstResponder(self)
     }
 }
 
@@ -227,6 +418,17 @@ private final class NameCellView: NSTableCellView {
         addSubview(linkMark)
         imageView = iconView
         textField = label
+    }
+
+    func prepareForEditing() {
+        textField?.isEditable = true
+        textField?.isSelectable = true
+        textField?.isBezeled = false
+        textField?.drawsBackground = false
+        if let cell = textField?.cell as? NSTextFieldCell {
+            cell.isScrollable = true
+            cell.usesSingleLineMode = true
+        }
     }
 
     @available(*, unavailable)
