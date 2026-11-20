@@ -62,6 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
+        // Go menu. Cmd+L focuses the path field that is already on screen.
+        let goItem = NSMenuItem()
+        mainMenu.addItem(goItem)
+        let goMenu = NSMenu(title: "Go")
+        goItem.submenu = goMenu
+        goMenu.addItem(withTitle: "Path", action: #selector(WindowController.focusPath(_:)), keyEquivalent: "l")
+
         // Window menu.
         let windowItem = NSMenuItem()
         mainMenu.addItem(windowItem)

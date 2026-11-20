@@ -2,6 +2,7 @@ import AppKit
 
 final class WindowController: NSWindowController, NSWindowDelegate {
     private let fileTable = FileTable(frame: .zero)
+    private let pathBar = PathBar(frame: .zero)
     private let statusBar = StatusBarView(frame: .zero)
     private let statusBarHeight: CGFloat = 24
     private var currentURL: URL?
@@ -23,12 +24,13 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
 
         let contentRect = window.contentLayoutRect
+        let pathHeight = PathBar.preferredHeight
         let scrollView = NSScrollView(
             frame: NSRect(
                 x: 0,
                 y: statusBarHeight,
                 width: contentRect.width,
-                height: contentRect.height - statusBarHeight
+                height: contentRect.height - statusBarHeight - pathHeight
             )
         )
         scrollView.autoresizingMask = [.width, .height]
@@ -42,6 +44,22 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         statusBar.frame = NSRect(x: 0, y: 0, width: contentRect.width, height: statusBarHeight)
         statusBar.autoresizingMask = [.width, .maxYMargin]
         contentView.addSubview(statusBar)
+
+        pathBar.frame = NSRect(
+            x: 0,
+            y: contentRect.height - pathHeight,
+            width: contentRect.width,
+            height: pathHeight
+        )
+        pathBar.autoresizingMask = [.width, .minYMargin]
+        contentView.addSubview(pathBar)
+        pathBar.onNavigate = { [weak self] url in
+            self?.show(folder: url)
+        }
+        pathBar.onFinishEditing = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self.fileTable)
+        }
 
         fileTable.onSelectionChange = { [weak self] in
             self?.updateStatusBar()
@@ -83,7 +101,13 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         fileTable.items = FileSystem.listItems(in: url)
         currentURL = url
         window?.title = url.lastPathComponent
+        pathBar.show(url: url)
         updateStatusBar()
+    }
+
+    /// Cmd+L. The field is already on screen; this only focuses it.
+    @objc func focusPath(_ sender: Any?) {
+        pathBar.focusField()
     }
 
     /// "12 items", or "12 items, 3 selected, 4 KB" with a selection.
