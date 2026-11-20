@@ -2,6 +2,8 @@ import AppKit
 
 final class WindowController: NSWindowController, NSWindowDelegate {
     private let fileTable = FileTable(frame: .zero)
+    private let statusBar = StatusBarView(frame: .zero)
+    private let statusBarHeight: CGFloat = 24
     private var currentURL: URL?
 
     init(startingURL: URL?) {
@@ -20,7 +22,15 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
         window.delegate = self
 
-        let scrollView = NSScrollView(frame: window.contentLayoutRect)
+        let contentRect = window.contentLayoutRect
+        let scrollView = NSScrollView(
+            frame: NSRect(
+                x: 0,
+                y: statusBarHeight,
+                width: contentRect.width,
+                height: contentRect.height - statusBarHeight
+            )
+        )
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -28,6 +38,15 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         let contentView = window.contentView ?? NSView()
         contentView.addSubview(scrollView)
         window.contentView = contentView
+
+        statusBar.frame = NSRect(x: 0, y: 0, width: contentRect.width, height: statusBarHeight)
+        statusBar.autoresizingMask = [.width, .maxYMargin]
+        contentView.addSubview(statusBar)
+
+        fileTable.onSelectionChange = { [weak self] in
+            self?.updateStatusBar()
+        }
+        window.initialFirstResponder = fileTable
 
         if let frame = settings.windowFrame {
             window.setFrame(
@@ -64,6 +83,22 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         fileTable.items = FileSystem.listItems(in: url)
         currentURL = url
         window?.title = url.lastPathComponent
+        updateStatusBar()
+    }
+
+    /// "12 items", or "12 items, 3 selected, 4 KB" with a selection.
+    /// Folders count as 0 bytes: the size column shows "—" for them,
+    /// and a recursive folder size is not a first-round thing.
+    private func updateStatusBar() {
+        let count = fileTable.items.count
+        var text = count == 1 ? "1 item" : "\(count) items"
+        let selected = fileTable.selectedItems
+        if !selected.isEmpty {
+            text += ", \(selected.count) selected"
+            let bytes = selected.reduce(Int64(0)) { $0 + ($1.isFolder ? 0 : $1.size) }
+            text += ", \(Format.size(bytes))"
+        }
+        statusBar.text = text
     }
 
     func windowWillClose(_ notification: Notification) {

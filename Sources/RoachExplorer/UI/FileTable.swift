@@ -3,12 +3,35 @@ import AppKit
 /// The dense four-column list: Name, Date modified, Size, Kind.
 /// Dotfiles are shown, but dimmer.
 final class FileTable: NSTableView {
+    /// Called after the selection changes, so the window can update its status bar.
+    var onSelectionChange: (() -> Void)?
+
     var items: [FileItem] = [] {
-        didSet { reloadData() }
+        didSet {
+            // Selection survives a refresh if the files are still there.
+            let selectedURLs = Set(
+                selectedRowIndexes.compactMap { $0 < oldValue.count ? oldValue[$0].url : nil }
+            )
+            reloadData()
+            let rows = IndexSet(items.indices.filter { selectedURLs.contains(items[$0].url) })
+            if !rows.isEmpty {
+                selectRowIndexes(rows, byExtendingSelection: false)
+            } else {
+                deselectAll(nil)
+            }
+        }
+    }
+
+    /// The items in the current selection, in row order.
+    var selectedItems: [FileItem] {
+        selectedRowIndexes.compactMap { $0 < items.count ? items[$0] : nil }
     }
 
     private let iconCache = NSCache<NSString, NSImage>()
     private let listFont = NSFont.systemFont(ofSize: 12)
+
+    private var typeAheadBuffer = ""
+    private var lastTypeAhead: Date?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -40,6 +63,67 @@ final class FileTable: NSTableView {
         addTableColumn(column)
     }
 
+    /// Combining marks, i.e. the first half of a dead-key sequence (umlauts
+    /// and friends). The Swift import of `nonBaseCharacterSet` is missing in
+    /// this SDK, so ask the ObjC runtime for it.
+    private static let nonBase: CharacterSet = {
+        let selector = NSSelectorFromString("nonBaseCharacterSet")
+        guard let result = NSCharacterSet.perform(selector) else { return CharacterSet() }
+        return result.takeUnretainedValue() as! CharacterSet
+    }()
+
+    /// Escape clears the selection. Plain characters are type-ahead.
+    /// Everything else (arrows, Shift+arrows, Cmd+A) is the table's own behavior.
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            deselectAll(nil)
+            return
+        }
+        // Arrow and function keys live at U+F700 and up. They are not names,
+        // and swallowing them stops Shift+Up/Down from extending the selection.
+        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           let characters = event.characters, characters.count == 1,
+           let scalar = characters.unicodeScalars.first,
+           scalar.value >= 32, scalar.value != 127, scalar.value < 0xF700,
+           !FileTable.nonBase.contains(scalar) {
+            let now = Date()
+            if let last = lastTypeAhead, now.timeIntervalSince(last) > 0.5 {
+                typeAheadBuffer = ""
+            }
+            lastTypeAhead = now
+            typeAheadBuffer += characters
+            let prefix = typeAheadBuffer.lowercased()
+            if let row = items.firstIndex(where: { $0.name.lowercased().hasPrefix(prefix) }) {
+                selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                scrollRowToVisible(row)
+            }
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    /// A click below the last row clears the selection.
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if row(at: point) < 0 {
+            deselectAll(nil)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    /// Keep the table at least as tall as the clip view, so clicks on the
+    /// empty area below the rows land here instead of on the scroll view.
+    override func tile() {
+        super.tile()
+        guard let contentSize = enclosingScrollView?.contentSize else { return }
+        let headerHeight = headerView?.frame.height ?? 0
+        let rowsHeight = CGFloat(numberOfRows) * rowHeight
+        var frame = frame
+        frame.size.height = max(rowsHeight + headerHeight, contentSize.height)
+        self.frame = frame
+    }
+
     private func icon(for item: FileItem) -> NSImage {
         let key = item.url.path as NSString
         if let cached = iconCache.object(forKey: key) { return cached }
@@ -53,6 +137,10 @@ final class FileTable: NSTableView {
 extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
         items.count
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        onSelectionChange?()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
