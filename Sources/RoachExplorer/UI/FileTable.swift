@@ -99,6 +99,8 @@ final class FileTable: NSTableView {
 
     /// Escape also cancels a pending cut. The window clears the clipboard mark.
     var onCancelCut: (() -> Void)?
+    /// Delete and Backspace move the selection to the Trash. No confirm.
+    var onTrash: (() -> Void)?
 
     /// Escape clears the selection. Plain characters are type-ahead.
     /// Everything else (arrows, Shift+arrows, Cmd+A) is the table's own behavior.
@@ -106,6 +108,12 @@ final class FileTable: NSTableView {
         if event.keyCode == 53 {
             onCancelCut?()
             deselectAll(nil)
+            return
+        }
+        // Delete (51) and Forward Delete (117). Both move the selection to the Trash.
+        if (event.keyCode == 51 || event.keyCode == 117),
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+            onTrash?()
             return
         }
         // F2, and Cmd+Return. Plain Return opens, so this has to come first.
@@ -180,6 +188,11 @@ final class FileTable: NSTableView {
         }
     }
 
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = menu(for: event) else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let clicked = row(at: point)
@@ -201,6 +214,9 @@ final class FileTable: NSTableView {
         if clicked >= 0 {
             menu.addItem(.separator())
             menu.addItem(withTitle: "Rename", action: #selector(WindowController.renameSelection(_:)), keyEquivalent: "")
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Move to Trash", action: #selector(WindowController.moveToTrash(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Delete Immediately", action: #selector(WindowController.deleteImmediately(_:)), keyEquivalent: "")
         }
         return menu
     }

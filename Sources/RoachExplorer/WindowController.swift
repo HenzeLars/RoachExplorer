@@ -134,6 +134,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         fileTable.onCancelCut = { [weak self] in
             self?.cancelCut()
         }
+        fileTable.onTrash = { [weak self] in
+            self?.moveToTrash(nil)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(clipboardChanged(_:)),
@@ -246,6 +249,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
         case #selector(NSText.paste(_:)):
             return !pathBar.isEditingField && !fileTable.isEditingName && FileClipboard.shared.canPaste
+        case #selector(moveToTrash(_:)), #selector(deleteImmediately(_:)):
+            return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
         default:
             return true
         }
@@ -297,6 +302,73 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         var number = 2
         while taken.contains("untitled\(number)") { number += 1 }
         return "untitled\(number)"
+    }
+
+    /// Delete and Backspace. No confirm. The Trash can be emptied from Finder.
+    @objc func moveToTrash(_ sender: Any?) {
+        let items = fileTable.selectedItems
+        guard !items.isEmpty else { return }
+        var failures: [String] = []
+        for item in items {
+            do {
+                try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+            } catch {
+                failures.append("\(item.name): \(error.localizedDescription)")
+            }
+        }
+        dropMissingCuts()
+        if !failures.isEmpty {
+            present(message: failures.joined(separator: "\n"))
+        }
+    }
+
+    /// Context menu only. Cancel is the focused button. Return does not delete.
+    @objc func deleteImmediately(_ sender: Any?) {
+        let items = fileTable.selectedItems
+        guard !items.isEmpty else { return }
+        let alert = NSAlert()
+        if items.count == 1 {
+            alert.messageText = "Delete \"\(items[0].name)\" immediately?"
+        } else {
+            alert.messageText = "Delete \(items.count) items immediately?"
+        }
+        alert.informativeText = "This can't be undone."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Delete")
+        alert.buttons[1].keyEquivalent = ""
+        let response = alert.runModal()
+        guard response == .alertSecondButtonReturn else { return }
+        var failures: [String] = []
+        for item in items {
+            do {
+                try FileManager.default.removeItem(at: item.url)
+            } catch {
+                failures.append("\(item.name): \(error.localizedDescription)")
+            }
+        }
+        dropMissingCuts()
+        if !failures.isEmpty {
+            present(message: failures.joined(separator: "\n"))
+        }
+    }
+
+    private func dropMissingCuts() {
+        guard let clip = FileClipboard.shared.current(), clip.kind == .move else { return }
+        let left = clip.urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        if left.isEmpty {
+            FileClipboard.shared.clearCut()
+        } else if left.count != clip.urls.count {
+            FileClipboard.shared.write(left, kind: .move)
+        }
+    }
+
+    private func present(message: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Could not delete"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
     @objc func cut(_ sender: Any?) {
