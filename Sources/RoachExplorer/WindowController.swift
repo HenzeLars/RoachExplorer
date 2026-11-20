@@ -11,6 +11,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var forwardStack: [URL] = []
     private var watchSource: DispatchSourceFileSystemObject?
     private var reloadScheduled = false
+    /// A second window, for "open all" of several folders. The app delegate sets this.
+    var onOpenWindow: ((URL) -> Void)?
 
     init(startingURL: URL?) {
         let settings = SettingsStore.load()
@@ -71,6 +73,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
         fileTable.onSelectionChange = { [weak self] in
             self?.updateStatusBar()
+        }
+        fileTable.onOpenRow = { [weak self] row, option in
+            self?.open(row: row, option: option)
+        }
+        fileTable.onOpenSelection = { [weak self] option in
+            self?.openSelection(option: option)
         }
         window.initialFirstResponder = fileTable
 
@@ -167,9 +175,101 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             return !forwardStack.isEmpty
         case #selector(goUp(_:)):
             return currentURL?.standardizedFileURL.path != "/"
+        case #selector(openSelection(_:)), #selector(openFocusedFolder(_:)):
+            return !pathBar.isEditingField
         default:
             return true
         }
+    }
+
+    /// Double-click. Only the clicked row, even if others are selected.
+    private func open(row: Int, option: Bool) {
+        guard row >= 0, row < fileTable.items.count else { return }
+        open(fileTable.items[row], option: option, foldersInNewWindow: false)
+    }
+
+    /// Return, Enter, or Cmd+O. One item opens. Several ask first.
+    @objc func openSelection(_ sender: Any?) {
+        let option = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+        openSelection(option: option)
+    }
+
+    /// Cmd+Down. The focused row, and only if it is a folder. No dialog.
+    @objc func openFocusedFolder(_ sender: Any?) {
+        let row = fileTable.selectedRow
+        guard row >= 0, row < fileTable.items.count else { return }
+        let item = fileTable.items[row]
+        guard resolvedFolder(item) != nil else { return }
+        open(item, option: false, foldersInNewWindow: false)
+    }
+
+    private func openSelection(option: Bool) {
+        let items = fileTable.selectedItems
+        guard !items.isEmpty else { return }
+        if items.count == 1 {
+            open(items[0], option: option, foldersInNewWindow: false)
+            return
+        }
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Open all at once?"
+        alert.addButton(withTitle: "Yes")
+        alert.addButton(withTitle: "No")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.openAll(items, option: option)
+        }
+    }
+
+    private func openAll(_ items: [FileItem], option: Bool) {
+        for item in items {
+            open(item, option: option, foldersInNewWindow: true)
+        }
+    }
+
+    /// A folder is entered. A package is launched. A file opens in its default app,
+    /// or in Terminal when Option is held and nothing claims it.
+    private func open(_ item: FileItem, option: Bool, foldersInNewWindow: Bool) {
+        if let folder = resolvedFolder(item) {
+            if foldersInNewWindow {
+                onOpenWindow?(folder)
+            } else {
+                show(folder: folder)
+            }
+            return
+        }
+        let url = item.url.resolvingSymlinksInPath()
+        if option, !isPackage(url), NSWorkspace.shared.urlForApplication(toOpen: url) == nil {
+            runInTerminal(url)
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// The folder to enter, following a symlink. Nil for a file or a package.
+    private func resolvedFolder(_ item: FileItem) -> URL? {
+        if item.isPackage { return nil }
+        let url = item.url.resolvingSymlinksInPath()
+        if isPackage(url) { return nil }
+        return isExistingDirectory(url) ? url : nil
+    }
+
+    private func isPackage(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isPackageKey]))?.isPackage ?? false
+    }
+
+    private func runInTerminal(_ url: URL) {
+        let shell = "'" + url.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        var apple = ""
+        for character in shell {
+            if character == "\\" || character == "\"" {
+                apple.append("\\")
+            }
+            apple.append(character)
+        }
+        let source = "tell application \"Terminal\" to do script \"\(apple)\""
+        var error: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&error)
     }
 
     /// Cmd+L. The field is already on screen; this only focuses it.

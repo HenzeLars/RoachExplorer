@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func openWindow(startingAt url: URL?) {
         let controller = WindowController(startingURL: url)
+        controller.onOpenWindow = { [weak self] url in
+            self?.openWindow(startingAt: url)
+        }
         windowControllers.append(controller)
         controller.showWindow(nil)
     }
@@ -57,6 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         fileItem.submenu = fileMenu
         fileMenu.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
+        fileMenu.addItem(withTitle: "Open", action: #selector(WindowController.openSelection(_:)), keyEquivalent: "o")
+        let openFolder = fileMenu.addItem(
+            withTitle: "Open Folder",
+            action: #selector(WindowController.openFocusedFolder(_:)),
+            keyEquivalent: "\u{F701}"
+        )
+        openFolder.keyEquivalentModifierMask = .command
 
         // Edit menu. Standard text actions, routed through the responder chain.
         // Undo and Redo are intentionally absent: Cmd+Z belongs to the later in-app undo, and until then it does nothing.

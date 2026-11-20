@@ -5,6 +5,10 @@ import AppKit
 final class FileTable: NSTableView {
     /// Called after the selection changes, so the window can update its status bar.
     var onSelectionChange: (() -> Void)?
+    /// Double-click. The row, and whether Option was held. Only this row, not the selection.
+    var onOpenRow: ((Int, Bool) -> Void)?
+    /// Return or Enter. Option asks to run a file that has no default app.
+    var onOpenSelection: ((Bool) -> Void)?
 
     var items: [FileItem] = [] {
         didSet {
@@ -47,6 +51,9 @@ final class FileTable: NSTableView {
         addColumn(title: "Date modified", width: 120)
         addColumn(title: "Size", width: 80)
         addColumn(title: "Kind", width: 180)
+
+        target = self
+        doubleAction = #selector(openClickedRow(_:))
     }
 
     @available(*, unavailable)
@@ -79,6 +86,14 @@ final class FileTable: NSTableView {
             deselectAll(nil)
             return
         }
+        // Return opens. Cmd+Return is rename, later, so it is left alone.
+        // Keypad Enter is 76. Option+Return is "run in Terminal" for a file
+        // with no default app; the window decides.
+        if (event.keyCode == 36 || event.keyCode == 76),
+           !event.modifierFlags.contains(.command) {
+            onOpenSelection?(event.modifierFlags.contains(.option))
+            return
+        }
         // Arrow and function keys live at U+F700 and up. They are not names,
         // and swallowing them stops Shift+Up/Down from extending the selection.
         if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
@@ -100,6 +115,13 @@ final class FileTable: NSTableView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    @objc private func openClickedRow(_ sender: Any?) {
+        let row = clickedRow
+        guard row >= 0 else { return }
+        let option = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+        onOpenRow?(row, option)
     }
 
     /// A click below the last row clears the selection.

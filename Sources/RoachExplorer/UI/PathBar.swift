@@ -90,6 +90,8 @@ final class PathBar: NSView, NSTextFieldDelegate {
         field.currentEditor()?.selectAll(nil)
     }
 
+    var isEditingField: Bool { isEditing }
+
     private var isEditing: Bool {
         guard let editor = field.currentEditor() else { return false }
         return window?.firstResponder === editor
