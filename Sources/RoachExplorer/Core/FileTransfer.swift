@@ -23,7 +23,8 @@ final class FileTransfer {
 
     var onProgress: ((String, Int, Int) -> Void)?
     /// Called off the main thread. Must not return until the user has chosen.
-    var onCollision: ((String) -> CollisionChoice)?
+    /// Nil means the question was cancelled.
+    var onCollision: ((String) -> CollisionChoice?)?
     /// Sources that were actually moved. Still valid if a later item fails.
     private(set) var movedSources: [URL] = []
 
@@ -99,7 +100,7 @@ final class FileTransfer {
         lock.unlock()
         if let decided { return decided }
         guard let onCollision else { return .skip }
-        let choice = onCollision(name)
+        guard let choice = onCollision(name) else { throw TransferError.cancelled }
         return choice
     }
 

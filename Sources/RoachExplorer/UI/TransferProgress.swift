@@ -56,6 +56,16 @@ final class TransferProgress: NSObject {
         bar.doubleValue = total == 0 ? 0 : Double(index) / Double(total)
     }
 
+    /// Hide while the collision question is up. The panel can come back.
+    func orderOut() {
+        panel?.orderOut(nil)
+    }
+
+    func orderFront() {
+        guard !closed, panel != nil else { return }
+        panel?.makeKeyAndOrderFront(nil)
+    }
+
     func close() {
         closed = true
         panel?.close()

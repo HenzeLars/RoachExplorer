@@ -1,6 +1,42 @@
 import AppKit
 import Darwin
 
+/// Counts working time only. A collision question pauses it, so a slow
+/// decision does not bring up the progress window.
+private final class WorkClock {
+    var onFire: (() -> Void)?
+    private var accumulated: TimeInterval = 0
+    private var started: Date?
+    private var pending: DispatchWorkItem?
+    private let limit: TimeInterval = 5
+
+    func resume() {
+        guard started == nil else { return }
+        started = Date()
+        let remaining = max(0.01, limit - accumulated)
+        let work = DispatchWorkItem { [weak self] in
+            self?.pending = nil
+            self?.onFire?()
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining, execute: work)
+    }
+
+    func pause() {
+        if let started {
+            accumulated += Date().timeIntervalSince(started)
+        }
+        started = nil
+        pending?.cancel()
+        pending = nil
+    }
+
+    func cancel() {
+        pause()
+        accumulated = 0
+    }
+}
+
 final class WindowController: NSWindowController, NSWindowDelegate {
     private let fileTable = FileTable(frame: .zero)
     private let pathBar = PathBar(frame: .zero)
@@ -281,44 +317,52 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         guard let currentURL, let clip = FileClipboard.shared.current() else { return }
         let transfer = FileTransfer()
         let progress = TransferProgress()
-        progress.onCancel = { transfer.cancel() }
-        progress.onDecide = { [weak self] in
-            self?.askCollision(named: nil) { choice in
-                if let choice { transfer.decide(choice) }
+        let title = clip.kind == .move ? "Moving" : "Copying"
+        let clock = WorkClock()
+        clock.onFire = {
+            progress.show(title: title)
+        }
+        progress.onCancel = {
+            transfer.cancel()
+            // A collision question blocks the copy. Abort it, or Cancel does nothing.
+            if NSApp.modalWindow != nil {
+                NSApp.abortModal()
             }
         }
-        let title = clip.kind == .move ? "Moving" : "Copying"
-        var showed = false
-        let reveal = DispatchWorkItem {
-            progress.show(title: title)
-            showed = true
+        progress.onDecide = { [weak self] in
+            guard let self else { return }
+            clock.pause()
+            progress.orderOut()
+            if let choice = self.askCollision(named: nil) {
+                transfer.decide(choice)
+            }
+            progress.orderFront()
+            clock.resume()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: reveal)
         transfer.onProgress = { name, index, total in
             DispatchQueue.main.async {
                 progress.update(name: name, index: index, total: total)
             }
         }
         transfer.onCollision = { [weak self] name in
-            var choice = CollisionChoice.skip
-            let done = DispatchSemaphore(value: 0)
-            DispatchQueue.main.async {
-                self?.askCollision(named: name) { answer in
-                    choice = answer ?? .skip
-                    if answer != nil, self?.applyToAll == true {
-                        transfer.decide(choice)
-                    }
-                    done.signal()
+            var choice: CollisionChoice?
+            DispatchQueue.main.sync {
+                clock.pause()
+                progress.orderOut()
+                choice = self?.askCollision(named: name)
+                if let choice, self?.applyToAll == true {
+                    transfer.decide(choice)
                 }
+                clock.resume()
             }
-            done.wait()
             return choice
         }
         let kind = clip.kind
         let sources = clip.urls
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            clock.resume()
             defer {
-                reveal.cancel()
+                clock.cancel()
                 DispatchQueue.main.async {
                     progress.close()
                     self?.refreshCutAppearance()
@@ -343,11 +387,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
     private var applyToAll = false
 
-    private func askCollision(named name: String?, chosen: @escaping (CollisionChoice?) -> Void) {
-        guard let window else {
-            chosen(nil)
-            return
-        }
+    /// The same question, whether a name just collided or the user asked
+    /// to decide the rest now. It is its own window, in front.
+    private func askCollision(named name: String?) -> CollisionChoice? {
         let alert = NSAlert()
         alert.messageText = name.map { "\($0) already exists." } ?? "For the remaining items"
         alert.informativeText = "Replace, keep both, or skip."
@@ -359,13 +401,13 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         let checkbox = NSButton(checkboxWithTitle: "Apply to All", target: nil, action: nil)
         checkbox.state = .on
         alert.accessoryView = checkbox
-        alert.beginSheetModal(for: window) { [weak self] response in
-            self?.applyToAll = checkbox.state == .on
-            switch response {
-            case .alertFirstButtonReturn: chosen(.replace)
-            case .alertSecondButtonReturn: chosen(.keepBoth)
-            default: chosen(.skip)
-            }
+        let response = alert.runModal()
+        if response == .abort { return nil }
+        applyToAll = checkbox.state == .on
+        switch response {
+        case .alertFirstButtonReturn: return .replace
+        case .alertSecondButtonReturn: return .keepBoth
+        default: return .skip
         }
     }
 
