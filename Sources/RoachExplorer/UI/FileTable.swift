@@ -118,6 +118,7 @@ final class FileTable: NSTableView {
     /// File URLs dropped on a folder row, or on the empty area. `copying` is Option.
     var onDrop: ((_ urls: [URL], _ destination: URL, _ copying: Bool) -> Void)?
     private var didDrag = false
+    private let rubberBand = RubberBandView()
 
     /// Escape clears the selection. Plain characters are type-ahead.
     /// Everything else (arrows, Shift+arrows, Cmd+A) is the table's own behavior.
@@ -178,33 +179,125 @@ final class FileTable: NSTableView {
         onOpenRow?(row, option)
     }
 
+    /// A drag starts only on the filename. Anywhere else, a drag is a rubber band.
     /// A click below the last row clears the selection. A slow second click
-    /// on the name of the already-selected row starts a rename. A double-click
-    /// opens, and cancels that.
+    /// on the name of the already-selected row starts a rename.
     override func mouseDown(with event: NSEvent) {
         cancelPendingRename()
         let point = convert(event.locationInWindow, from: nil)
         let clicked = row(at: point)
-        if clicked < 0 {
-            deselectAll(nil)
+        let onFilename = clicked >= 0 && isFilenameHit(point, row: clicked)
+        if event.clickCount > 1 {
+            if clicked >= 0 {
+                if onFilename {
+                    super.mouseDown(with: event)
+                } else {
+                    onOpenRow?(clicked, event.modifierFlags.contains(.option))
+                }
+            }
             return
         }
-        if event.clickCount > 1 {
-            super.mouseDown(with: event)
+        guard onFilename else {
+            trackRubberBand(from: point, start: event, clicked: clicked)
             return
         }
         let wasOnlySelection = selectedRowIndexes == IndexSet(integer: clicked)
-        let onName = isNameClick(point, row: clicked)
         didDrag = false
         super.mouseDown(with: event)
         if didDrag { return }
-        if wasOnlySelection, onName {
+        if wasOnlySelection, isNameClick(point, row: clicked) {
             let work = DispatchWorkItem { [weak self] in
                 self?.beginEditing(row: clicked, selectingAll: false)
             }
             pendingRename = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
         }
+    }
+
+    /// The table would otherwise drag as soon as the mouse moves, including a rubber band.
+    override func canDragRows(with rowIndexes: IndexSet, at mouseDownPoint: NSPoint) -> Bool {
+        let row = row(at: mouseDownPoint)
+        return row >= 0 && rowIndexes.contains(row) && isFilenameHit(mouseDownPoint, row: row)
+    }
+
+    /// Icon plus the name text. The empty stretch of the name column is not a drag.
+    private func isFilenameHit(_ point: NSPoint, row: Int) -> Bool {
+        let column = column(at: point)
+        guard column >= 0, row >= 0, row < items.count,
+              tableColumns[column].identifier.rawValue == "Name" else { return false }
+        let cell = frameOfCell(atColumn: column, row: row)
+        let textWidth = (items[row].name as NSString).size(withAttributes: [.font: listFont]).width
+        let hitWidth = min(cell.width, 4 + 16 + 6 + textWidth + 10)
+        let hit = NSRect(x: cell.minX, y: cell.minY, width: hitWidth, height: cell.height)
+        return hit.contains(point)
+    }
+
+    private func trackRubberBand(from start: NSPoint, start event: NSEvent, clicked: Int) {
+        let flags = event.modifierFlags
+        let extend = flags.contains(.command) || flags.contains(.shift)
+        let original = selectedRowIndexes
+        var banding = false
+        window?.makeFirstResponder(self)
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp { break }
+            autoscroll(with: next)
+            let current = convert(next.locationInWindow, from: nil)
+            let dx = current.x - start.x
+            let dy = current.y - start.y
+            if !banding, dx * dx + dy * dy < 16 { continue }
+            banding = true
+            showRubberBand(from: start, to: current, extend: extend, original: original)
+        }
+        clearRubberBand()
+        if banding { return }
+        if clicked < 0 {
+            if !extend { deselectAll(nil) }
+        } else {
+            selectClick(row: clicked, flags: flags)
+        }
+    }
+
+    private func selectClick(row: Int, flags: NSEvent.ModifierFlags) {
+        if flags.contains(.command) {
+            if selectedRowIndexes.contains(row) {
+                deselectRow(row)
+            } else {
+                selectRowIndexes(IndexSet(integer: row), byExtendingSelection: true)
+            }
+        } else if flags.contains(.shift), let anchor = selectedRowIndexes.first {
+            let lower = min(anchor, row)
+            let upper = max(anchor, row)
+            selectRowIndexes(IndexSet(integersIn: lower...upper), byExtendingSelection: false)
+        } else {
+            selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
+
+    private func showRubberBand(
+        from start: NSPoint,
+        to current: NSPoint,
+        extend: Bool,
+        original: IndexSet
+    ) {
+        let band = NSRect(
+            x: min(start.x, current.x),
+            y: min(start.y, current.y),
+            width: abs(current.x - start.x),
+            height: abs(current.y - start.y)
+        )
+        if rubberBand.superview == nil {
+            addSubview(rubberBand)
+        }
+        rubberBand.frame = band
+        var indexes = extend ? original : IndexSet()
+        for row in 0..<numberOfRows where band.intersects(rect(ofRow: row)) {
+            indexes.insert(row)
+        }
+        selectRowIndexes(indexes, byExtendingSelection: false)
+    }
+
+    private func clearRubberBand() {
+        rubberBand.removeFromSuperview()
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -528,6 +621,22 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
 }
 
 /// Name column cell: 16 pt icon, name, and a small link mark for symlinks.
+private final class RubberBandView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.22).cgColor
+        layer?.borderColor = NSColor.selectedContentBackgroundColor.cgColor
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 2
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+}
+
 private final class NameCellView: NSTableCellView {
     var showLinkMark = false {
         didSet { linkMark.isHidden = !showLinkMark }
