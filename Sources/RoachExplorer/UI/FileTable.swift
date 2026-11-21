@@ -16,14 +16,22 @@ final class FileTable: NSTableView {
     /// Editing ended. `cancelled` is Escape. Click-away and Return are not cancelled.
     var onEditEnded: ((URL, String, Bool) -> Void)?
 
-    var items: [FileItem] = [] {
-        didSet {
+    private var storedItems: [FileItem] = []
+
+    /// The rows of the table, always in the current sort order.
+    /// A computed setter: sorting the backing store in place would not
+    /// re-enter, but `items.sort` on an observed stored property does.
+    var items: [FileItem] {
+        get { storedItems }
+        set {
             // Selection survives a refresh if the files are still there.
             let selectedURLs = Set(
-                selectedRowIndexes.compactMap { $0 < oldValue.count ? oldValue[$0].url : nil }
+                selectedRowIndexes.compactMap { $0 < storedItems.count ? storedItems[$0].url : nil }
             )
+            storedItems = newValue
+            applySort()
             reloadData()
-            let rows = IndexSet(items.indices.filter { selectedURLs.contains(items[$0].url) })
+            let rows = IndexSet(storedItems.indices.filter { selectedURLs.contains(storedItems[$0].url) })
             if !rows.isEmpty {
                 selectRowIndexes(rows, byExtendingSelection: false)
             } else {
@@ -74,6 +82,8 @@ final class FileTable: NSTableView {
         addColumn(title: "Date modified", width: 120)
         addColumn(title: "Size", width: 80)
         addColumn(title: "Kind", width: 180)
+        // Name ascending is the default order. The arrow shows on that header.
+        sortDescriptors = [NSSortDescriptor(key: "Name", ascending: true)]
 
         target = self
         doubleAction = #selector(openClickedRow(_:))
@@ -90,7 +100,42 @@ final class FileTable: NSTableView {
         column.width = width
         column.minWidth = 56
         column.resizingMask = [.userResizingMask]
+        // A header click sorts by this column; the same header again reverses.
+        column.sortDescriptorPrototype = NSSortDescriptor(key: title, ascending: true)
         addTableColumn(column)
+    }
+
+    /// The column a header click sorts by, and its direction.
+    /// Folders stay first in every order.
+    private var sortColumn = "Name"
+    private var sortAscending = true
+
+    /// Folders first, then the active column, then name as the tie-break.
+    private func applySort() {
+        storedItems.sort { a, b in
+            if a.isFolder != b.isFolder { return a.isFolder }
+            let order = compare(a, b)
+            return sortAscending ? order != .orderedDescending : order != .orderedAscending
+        }
+    }
+
+    private func compare(_ a: FileItem, _ b: FileItem) -> ComparisonResult {
+        switch sortColumn {
+        case "Date modified":
+            if a.modified != b.modified {
+                return a.modified < b.modified ? .orderedAscending : .orderedDescending
+            }
+        case "Size":
+            if a.size != b.size {
+                return a.size < b.size ? .orderedAscending : .orderedDescending
+            }
+        case "Kind":
+            let byKind = a.kind.localizedCaseInsensitiveCompare(b.kind)
+            if byKind != .orderedSame { return byKind }
+        default:
+            break
+        }
+        return a.name.localizedCaseInsensitiveCompare(b.name)
     }
 
     /// Combining marks, i.e. the first half of a dead-key sequence (umlauts
@@ -516,6 +561,15 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         onSelectionChange?()
+    }
+
+    /// A header click. Clicking the same header again reverses the direction.
+    func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldSortDescriptors: [NSSortDescriptor]) {
+        guard let descriptor = sortDescriptors.first else { return }
+        sortColumn = descriptor.key ?? "Name"
+        sortAscending = descriptor.ascending
+        applySort()
+        reloadData()
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
