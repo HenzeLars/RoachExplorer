@@ -18,6 +18,9 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        wantsLayer = true
+        // Subviews must not paint over the file list. macOS 14 does not clip by default.
+        clipsToBounds = true
         table.dataSource = self
         table.delegate = self
         table.onRemoveFavorite = { [weak self] row in
@@ -39,6 +42,7 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
         scroll.drawsBackground = true
         scroll.backgroundColor = .windowBackgroundColor
         scroll.borderType = .noBorder
+        scroll.clipsToBounds = true
         scroll.documentView = table
         scroll.setAccessibilityLabel("Sidebar")
         addSubview(scroll)

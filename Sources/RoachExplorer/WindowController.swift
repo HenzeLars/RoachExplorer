@@ -89,6 +89,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets()
+        scrollView.clipsToBounds = true
         scrollView.documentView = fileTable
         let contentView = window.contentView ?? NSView()
         contentView.addSubview(scrollView)

@@ -63,7 +63,9 @@ final class FileTable: NSTableView {
         usesAlternatingRowBackgroundColors = false
         allowsEmptySelection = true
         allowsMultipleSelection = true
-        style = .inset
+        // Inset style only draws when the scroll view is the full window.
+        // Beside a sidebar it leaves a blank panel. Plain draws the rows.
+        style = .plain
         setDraggingSourceOperationMask([.copy, .move], forLocal: true)
         setDraggingSourceOperationMask([.copy, .move], forLocal: false)
         registerForDraggedTypes([.fileURL])
