@@ -41,9 +41,10 @@ Work in progress. Built and used daily by one person, so it covers the operation
 
 **Getting at things**
 
-- Quick Look with Space, Get Info with `Cmd+I` for one item's details or a multi-selection summary — including the recursive size of folders, the created date, and the owner and group. A summary does not claim one date or one owner; it shows a dash.
+- Quick Look with Space, then Up and Down step through the folder with the preview following. Get Info with `Cmd+I` for one item's details or a multi-selection summary — including the recursive size of folders, the created date, and the owner and group. A summary does not claim one date or one owner; it shows a dash.
 - Permissions are editable in the Info window by clicking the mode bits. The owner and group are read-only: changing them can need root.
 - Open With, including *Other…*, from the context menu.
+- Copy Path with `Option+Cmd+C` puts one path per line on the clipboard, ready for a shell. Nothing selected copies the open folder. Show in Finder and Open in Terminal are in the context menu, for when you want to leave.
 - Filter the current folder by name with `Cmd+F`. It narrows what is listed; it never searches the disk.
 - Drag a selection into Terminal, iTerm, or Warp and get a shell-escaped path: single quotes, embedded quotes handled, one argument per file.
 
@@ -61,7 +62,8 @@ Work in progress. Built and used daily by one person, so it covers the operation
 | Undo / Redo | `Cmd+Z` / `Cmd+Shift+Z` |
 | Move to Trash | `Delete`, `Backspace` |
 | Get Info | `Cmd+I` |
-| Quick Look | `Space` |
+| Quick Look | `Space`, then `Up` / `Down` |
+| Copy path | `Option+Cmd+C` |
 | Filter | `Cmd+F` |
 | Back / Forward | `Cmd+[` / `Cmd+]` |
 | Enclosing folder | `Cmd+Up` |

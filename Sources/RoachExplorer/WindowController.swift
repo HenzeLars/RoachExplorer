@@ -367,13 +367,18 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The panel is its own window, so a local monitor is what sees Space
-    /// and Escape while it is key.
+    /// and Escape while it is key. Arrow keys move the selection, which reloads
+    /// the preview, so the panel steps through the folder without closing.
     private func installPreviewKeyMonitor() {
         previewKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let panel = QLPreviewPanel.shared(),
                   panel.isVisible, event.window === panel else { return event }
             if event.keyCode == 49 || event.keyCode == 53 {
                 self.closeQuickLook()
+                return nil
+            }
+            if event.keyCode == 125 || event.keyCode == 126 {
+                self.fileTable.moveSelection(by: event.keyCode == 125 ? 1 : -1)
                 return nil
             }
             return event
@@ -405,6 +410,11 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         case #selector(showInfo(_:)):
             menuItem.title = fileTable.infoActionTitle
             return !isEditingText && !fileTable.selectedItems.isEmpty
+        case #selector(copyPath(_:)):
+            // Always allowed: an empty selection copies the open folder.
+            return !isEditingText
+        case #selector(showInFinder(_:)), #selector(openInTerminal(_:)):
+            return !isEditingText
         case #selector(moveToTrash(_:)), #selector(deleteImmediately(_:)):
             return !isEditingText && !fileTable.selectedItems.isEmpty
         case #selector(focusFilter(_:)):
@@ -570,6 +580,44 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     @objc func paste(_ sender: Any?) {
         guard let currentURL, let clip = FileClipboard.shared.current() else { return }
         startTransfer(sources: clip.urls, kind: clip.kind, into: currentURL)
+    }
+
+    /// `⌥⌘C`, and the context menu. One path per line, so a multi-selection
+    /// pastes into a shell as a list. Nothing selected copies the open folder.
+    @objc func copyPath(_ sender: Any?) {
+        let paths = fileTable.selectedItems.map(\.url.path)
+        let text = paths.isEmpty ? (currentURL?.path ?? "") : paths.joined(separator: "\n")
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    /// Show in Finder. Reveals the selection, or the open folder when there is none.
+    @objc func showInFinder(_ sender: Any?) {
+        let urls = fileTable.selectedItems.map(\.url)
+        if urls.isEmpty, let currentURL {
+            NSWorkspace.shared.activateFileViewerSelecting([currentURL])
+        } else if !urls.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+    }
+
+    /// Open in Terminal. The folder is handed to Terminal, which opens a window
+    /// there itself, so this needs no scripting and no shell to guess at.
+    @objc func openInTerminal(_ sender: Any?) {
+        guard let folder = currentURL,
+              let terminal = NSWorkspace.shared.urlForApplication(
+                  withBundleIdentifier: "com.apple.Terminal"
+              ) else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(
+            [folder],
+            withApplicationAt: terminal,
+            configuration: NSWorkspace.OpenConfiguration()
+        )
     }
 
     /// Cmd+D. "name copy", then "name copy 2". No collision question: the

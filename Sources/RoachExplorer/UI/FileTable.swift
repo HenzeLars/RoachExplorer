@@ -74,6 +74,17 @@ final class FileTable: NSTableView {
         selectedRowIndexes.compactMap { $0 < items.count ? items[$0] : nil }
     }
 
+    /// Quick Look arrow keys. Moves the selection by `delta` rows and keeps it
+    /// in view. Clamped, not wrapped: the panel stops at the ends of the list.
+    func moveSelection(by delta: Int) {
+        guard !items.isEmpty else { return }
+        let rows = selectedRowIndexes
+        let anchor = delta < 0 ? rows.min() : rows.max()
+        let next = min(max((anchor ?? (delta < 0 ? 0 : -1)) + delta, 0), items.count - 1)
+        selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+        scrollRowToVisible(next)
+    }
+
     /// One file is Get Info. A folder, or more than one row, is Summary.
     var infoActionTitle: String {
         if selectedRowIndexes.count > 1 { return "Summary" }
@@ -403,11 +414,16 @@ final class FileTable: NSTableView {
         }
         menu.addItem(withTitle: "New Folder", action: #selector(WindowController.newFolder(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "New File", action: #selector(WindowController.newFile(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Open in Terminal", action: #selector(WindowController.openInTerminal(_:)), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
         if clicked >= 0 {
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Copy Path", action: #selector(WindowController.copyPath(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Show in Finder", action: #selector(WindowController.showInFinder(_:)), keyEquivalent: "")
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Duplicate", action: #selector(WindowController.duplicateSelection(_:)), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "Rename", action: #selector(WindowController.renameSelection(_:)), keyEquivalent: "")
