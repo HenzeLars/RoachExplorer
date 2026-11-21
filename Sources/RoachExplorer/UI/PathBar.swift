@@ -12,6 +12,9 @@ final class PathBar: NSView, NSTextFieldDelegate {
     var onBack: (() -> Void)?
     var onForward: (() -> Void)?
     var onReload: (() -> Void)?
+    /// File URLs dropped on a path segment. `copying` is Option.
+    var onDrop: ((_ urls: [URL], _ destination: URL, _ copying: Bool) -> Void)?
+    private var dropHighlight: NSButton?
 
     private let backButton = NSButton()
     private let forwardButton = NSButton()
@@ -62,6 +65,7 @@ final class PathBar: NSView, NSTextFieldDelegate {
         segmentScroll.documentView = segmentDocument
         segmentScroll.setAccessibilityLabel("Path segments")
         addSubview(segmentScroll)
+        registerForDraggedTypes([.fileURL])
     }
 
     @available(*, unavailable)
@@ -201,6 +205,68 @@ final class PathBar: NSView, NSTextFieldDelegate {
         let maxX = max(0, segmentDocument.frame.width - visible)
         segmentScroll.contentView.scroll(to: NSPoint(x: maxX, y: 0))
         segmentScroll.reflectScrolledClipView(segmentScroll.contentView)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        clearDropHighlight()
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        defer { clearDropHighlight() }
+        guard let destination = segmentURL(for: sender) else { return false }
+        let urls = DragFiles.urls(from: sender.draggingPasteboard)
+        guard DropTarget.canDrop(urls, into: destination) else { return false }
+        onDrop?(urls, destination, DragFiles.wantsCopy(sender))
+        return true
+    }
+
+    private func dropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let destination = segmentURL(for: sender) else {
+            clearDropHighlight()
+            return []
+        }
+        let urls = DragFiles.urls(from: sender.draggingPasteboard)
+        guard DropTarget.canDrop(urls, into: destination) else {
+            clearDropHighlight()
+            return []
+        }
+        return DragFiles.operation(for: sender)
+    }
+
+    private func segmentURL(for info: NSDraggingInfo) -> URL? {
+        let local = segmentDocument.convert(info.draggingLocation, from: nil)
+        var found: NSButton?
+        for case let button as NSButton in segmentDocument.subviews {
+            if button.frame.contains(local) {
+                found = button
+                break
+            }
+        }
+        guard let found, found.tag >= 0, found.tag < segmentURLs.count else {
+            clearDropHighlight()
+            return nil
+        }
+        if dropHighlight !== found {
+            clearDropHighlight()
+            dropHighlight = found
+            found.wantsLayer = true
+            found.layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.45).cgColor
+            found.layer?.cornerRadius = 4
+        }
+        return segmentURLs[found.tag]
+    }
+
+    private func clearDropHighlight() {
+        dropHighlight?.layer?.backgroundColor = nil
+        dropHighlight = nil
     }
 
     @objc private func segmentClicked(_ sender: NSButton) {

@@ -37,6 +37,13 @@ final class FileTable: NSTableView {
         selectedRowIndexes.compactMap { $0 < items.count ? items[$0] : nil }
     }
 
+    /// One file is Get Info. A folder, or more than one row, is Summary.
+    var infoActionTitle: String {
+        if selectedRowIndexes.count > 1 { return "Summary" }
+        if let item = selectedItems.first, item.isFolder, !item.isLink { return "Summary" }
+        return "Get Info"
+    }
+
     private let iconCache = NSCache<NSString, NSImage>()
     private let listFont = NSFont.systemFont(ofSize: 12)
 
@@ -57,6 +64,9 @@ final class FileTable: NSTableView {
         allowsEmptySelection = true
         allowsMultipleSelection = true
         style = .inset
+        setDraggingSourceOperationMask([.copy, .move], forLocal: true)
+        setDraggingSourceOperationMask([.copy, .move], forLocal: false)
+        registerForDraggedTypes([.fileURL])
 
         addColumn(title: "Name", width: 300)
         addColumn(title: "Date modified", width: 120)
@@ -101,6 +111,11 @@ final class FileTable: NSTableView {
     var onCancelCut: (() -> Void)?
     /// Delete and Backspace move the selection to the Trash. No confirm.
     var onTrash: (() -> Void)?
+    /// The open folder. A drop below the rows lands here.
+    var folderURL: URL?
+    /// File URLs dropped on a folder row, or on the empty area. `copying` is Option.
+    var onDrop: ((_ urls: [URL], _ destination: URL, _ copying: Bool) -> Void)?
+    private var didDrag = false
 
     /// Escape clears the selection. Plain characters are type-ahead.
     /// Everything else (arrows, Shift+arrows, Cmd+A) is the table's own behavior.
@@ -178,7 +193,9 @@ final class FileTable: NSTableView {
         }
         let wasOnlySelection = selectedRowIndexes == IndexSet(integer: clicked)
         let onName = isNameClick(point, row: clicked)
+        didDrag = false
         super.mouseDown(with: event)
+        if didDrag { return }
         if wasOnlySelection, onName {
             let work = DispatchWorkItem { [weak self] in
                 self?.beginEditing(row: clicked, selectingAll: false)
@@ -203,6 +220,7 @@ final class FileTable: NSTableView {
         let menu = NSMenu()
         if clicked >= 0 {
             menu.addItem(withTitle: "Open", action: #selector(WindowController.openSelection(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: infoActionTitle, action: #selector(WindowController.showInfo(_:)), keyEquivalent: "")
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: "New Folder", action: #selector(WindowController.newFolder(_:)), keyEquivalent: "")
@@ -338,6 +356,20 @@ final class FileTable: NSTableView {
     }
 }
 
+extension FileTable {
+    override func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        let copying = NSEvent.modifierFlags.contains(.option)
+        if context == .outsideApplication {
+            // Terminal takes a copy of the path. Finder may move.
+            return copying ? .copy : [.copy, .move]
+        }
+        return copying ? .copy : .move
+    }
+}
+
 extension FileTable: NSTextFieldDelegate {
     func control(
         _ control: NSControl,
@@ -389,6 +421,65 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         onSelectionChange?()
+    }
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard !isEditingName, row >= 0, row < items.count else { return nil }
+        return items[row].url as NSURL
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        draggingSession session: NSDraggingSession,
+        willBeginAt screenPoint: NSPoint,
+        forRowIndexes rowIndexes: IndexSet
+    ) {
+        didDrag = true
+        cancelPendingRename()
+        let urls = rowIndexes.compactMap { $0 < items.count ? items[$0].url : nil }
+        session.draggingPasteboard.setString(ShellPath.join(urls), forType: .string)
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        validateDrop info: NSDraggingInfo,
+        proposedRow row: Int,
+        proposedDropOperation dropOperation: NSTableView.DropOperation
+    ) -> NSDragOperation {
+        guard !isEditingName else { return [] }
+        let urls = DragFiles.urls(from: info.draggingPasteboard)
+        guard let destination = dropDestination(row: row, operation: dropOperation),
+              DropTarget.canDrop(urls, into: destination) else { return [] }
+        if row >= 0, row < items.count, dropOperation == .on, DropTarget.folder(resolving: items[row].url) != nil {
+            setDropRow(row, dropOperation: .on)
+        } else {
+            setDropRow(-1, dropOperation: .on)
+        }
+        return DragFiles.operation(for: info)
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        acceptDrop info: NSDraggingInfo,
+        row: Int,
+        dropOperation: NSTableView.DropOperation
+    ) -> Bool {
+        let urls = DragFiles.urls(from: info.draggingPasteboard)
+        guard let destination = dropDestination(row: row, operation: dropOperation),
+              DropTarget.canDrop(urls, into: destination) else { return false }
+        onDrop?(urls, destination, DragFiles.wantsCopy(info))
+        return true
+    }
+
+    /// A folder row, or the open folder when the drop is below the rows.
+    private func dropDestination(row: Int, operation: NSTableView.DropOperation) -> URL? {
+        if row >= 0, row < items.count, operation == .on {
+            return DropTarget.folder(resolving: items[row].url)
+        }
+        if row < 0 || row >= items.count {
+            return folderURL.flatMap { DropTarget.folder(resolving: $0) }
+        }
+        return nil
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

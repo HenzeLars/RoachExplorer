@@ -22,6 +22,14 @@ enum Format {
         return "\(text) \(units[index])"
     }
 
+    /// Exact count, with the locale's grouping. "4,118 bytes" or "4.118 bytes".
+    static func groupedBytes(_ bytes: Int64) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        let number = formatter.string(from: NSNumber(value: bytes)) ?? "\(bytes)"
+        return bytes == 1 ? "\(number) byte" : "\(number) bytes"
+    }
+
     /// Today: "10:41". Yesterday: "yesterday". This year: "Nov 3". Older: "Nov 3, 2023".
     static func date(_ date: Date) -> String {
         let calendar = Calendar.current

@@ -53,6 +53,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var trackingSwipe = false
     /// A folder we just created. Escape deletes it. Return keeps it.
     private var creatingURL: URL?
+    private var infoWindow: InfoWindow?
     /// A second window, for "open all" of several folders. The app delegate sets this.
     var onOpenWindow: ((URL) -> Void)?
 
@@ -137,6 +138,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         fileTable.onTrash = { [weak self] in
             self?.moveToTrash(nil)
         }
+        fileTable.onDrop = { [weak self] urls, destination, copying in
+            self?.startTransfer(sources: urls, kind: copying ? .copy : .move, into: destination)
+        }
+        pathBar.onDrop = { [weak self] urls, destination, copying in
+            self?.startTransfer(sources: urls, kind: copying ? .copy : .move, into: destination)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(clipboardChanged(_:)),
@@ -191,6 +198,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         while backStack.last == destination {
             backStack.removeLast()
         }
+        fileTable.folderURL = destination
         fileTable.items = FileSystem.listItems(in: destination)
         currentURL = destination
         window?.title = destination.path == "/" ? "/" : destination.lastPathComponent
@@ -249,6 +257,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
         case #selector(NSText.paste(_:)):
             return !pathBar.isEditingField && !fileTable.isEditingName && FileClipboard.shared.canPaste
+        case #selector(showInfo(_:)):
+            menuItem.title = fileTable.infoActionTitle
+            return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
         case #selector(moveToTrash(_:)), #selector(deleteImmediately(_:)):
             return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
         default:
@@ -302,6 +313,17 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         var number = 2
         while taken.contains("untitled\(number)") { number += 1 }
         return "untitled\(number)"
+    }
+
+    /// One window. One item is the details. Several items are a summary.
+    /// The size walk, including subfolders, happens here, not in the status bar.
+    @objc func showInfo(_ sender: Any?) {
+        let items = fileTable.selectedItems
+        guard !items.isEmpty, let currentURL else { return }
+        if infoWindow == nil {
+            infoWindow = InfoWindow()
+        }
+        infoWindow?.show(items: items, folder: currentURL)
     }
 
     /// Delete and Backspace. No confirm. The Trash can be emptied from Finder.
@@ -387,9 +409,15 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
     @objc func paste(_ sender: Any?) {
         guard let currentURL, let clip = FileClipboard.shared.current() else { return }
+        startTransfer(sources: clip.urls, kind: clip.kind, into: currentURL)
+    }
+
+    /// Paste, and a drop. Same collision question, same cross-volume rule.
+    private func startTransfer(sources: [URL], kind: TransferKind, into destination: URL) {
+        guard !sources.isEmpty else { return }
         let transfer = FileTransfer()
         let progress = TransferProgress()
-        let title = clip.kind == .move ? "Moving" : "Copying"
+        let title = kind == .move ? "Moving" : "Copying"
         let clock = WorkClock()
         clock.onFire = {
             progress.show(title: title)
@@ -429,8 +457,6 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             }
             return choice
         }
-        let kind = clip.kind
-        let sources = clip.urls
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             clock.resume()
             defer {
@@ -442,7 +468,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
                 }
             }
             do {
-                _ = try transfer.run(sources: sources, kind: kind, into: currentURL)
+                _ = try transfer.run(sources: sources, kind: kind, into: destination)
             } catch TransferError.cancelled {
                 // Stopped. What already moved stays moved.
             } catch {

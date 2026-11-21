@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         rename.keyEquivalentModifierMask = []
         fileMenu.addItem(withTitle: "Open", action: #selector(WindowController.openSelection(_:)), keyEquivalent: "o")
+        fileMenu.addItem(withTitle: "Get Info", action: #selector(WindowController.showInfo(_:)), keyEquivalent: "i")
         let openFolder = fileMenu.addItem(
             withTitle: "Open Folder",
             action: #selector(WindowController.openFocusedFolder(_:)),
