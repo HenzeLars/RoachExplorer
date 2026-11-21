@@ -41,6 +41,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private let fileTable = FileTable(frame: .zero)
     private let pathBar = PathBar(frame: .zero)
     private let statusBar = StatusBarView(frame: .zero)
+    private let sidebar = Sidebar(frame: .zero)
     private let statusBarHeight: CGFloat = 24
     private var currentURL: URL?
     private var backStack: [URL] = []
@@ -66,7 +67,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
         window.title = "Roach Explorer"
-        window.minSize = NSSize(width: 480, height: 300)
+        window.minSize = NSSize(width: 720, height: 320)
         window.isReleasedWhenClosed = false
 
         super.init(window: window)
@@ -75,11 +76,13 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
         let contentRect = window.contentLayoutRect
         let pathHeight = PathBar.preferredHeight
+        let sidebarWidth = Sidebar.preferredWidth
+        let listWidth = max(0, contentRect.width - sidebarWidth)
         let scrollView = NSScrollView(
             frame: NSRect(
-                x: 0,
+                x: sidebarWidth,
                 y: statusBarHeight,
-                width: contentRect.width,
+                width: listWidth,
                 height: contentRect.height - statusBarHeight - pathHeight
             )
         )
@@ -91,7 +94,30 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         contentView.addSubview(scrollView)
         window.contentView = contentView
 
-        statusBar.frame = NSRect(x: 0, y: 0, width: contentRect.width, height: statusBarHeight)
+        sidebar.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: sidebarWidth,
+            height: contentRect.height - pathHeight
+        )
+        sidebar.autoresizingMask = [.height, .maxXMargin]
+        contentView.addSubview(sidebar)
+        sidebar.setFavorites(settings.favorites)
+        sidebar.onNavigate = { [weak self] url in
+            guard let self else { return }
+            self.show(folder: url)
+            self.window?.makeFirstResponder(self.fileTable)
+        }
+        sidebar.onDrop = { [weak self] urls, destination, copying in
+            self?.startTransfer(sources: urls, kind: copying ? .copy : .move, into: destination)
+        }
+        sidebar.onFavoritesChanged = { paths in
+            var stored = SettingsStore.load()
+            stored.favorites = paths
+            SettingsStore.save(stored)
+        }
+
+        statusBar.frame = NSRect(x: sidebarWidth, y: 0, width: listWidth, height: statusBarHeight)
         statusBar.autoresizingMask = [.width, .maxYMargin]
         contentView.addSubview(statusBar)
 
@@ -201,6 +227,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         fileTable.folderURL = destination
         fileTable.items = FileSystem.listItems(in: destination)
         currentURL = destination
+        sidebar.highlight(url: destination)
         window?.title = destination.path == "/" ? "/" : destination.lastPathComponent
         pathBar.show(url: destination)
         updateStatusBar()

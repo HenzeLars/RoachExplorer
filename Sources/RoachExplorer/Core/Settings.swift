@@ -3,6 +3,21 @@ import Foundation
 struct Settings: Codable {
     var lastPath: String?
     var windowFrame: WindowFrame?
+    /// Favorite folder paths. Missing from older files, so decode must not fail.
+    var favorites: [String]
+
+    init(lastPath: String? = nil, windowFrame: WindowFrame? = nil, favorites: [String] = []) {
+        self.lastPath = lastPath
+        self.windowFrame = windowFrame
+        self.favorites = favorites
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        lastPath = try container.decodeIfPresent(String.self, forKey: .lastPath)
+        windowFrame = try container.decodeIfPresent(WindowFrame.self, forKey: .windowFrame)
+        favorites = try container.decodeIfPresent([String].self, forKey: .favorites) ?? []
+    }
 }
 
 struct WindowFrame: Codable {
