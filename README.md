@@ -2,6 +2,8 @@
 
 # Roach Explorer
 
+[![Build](https://github.com/HenzeLars/RoachExplorer/actions/workflows/build.yml/badge.svg)](https://github.com/HenzeLars/RoachExplorer/actions/workflows/build.yml)
+
 A file manager for macOS, written in Swift and AppKit.
 
 It is a working file manager, not a Finder clone: dense list, always-visible path, and the file operations you actually use. The behaviour is deliberately closer to Nautilus or Windows Explorer than to Finder in the places where that is the better habit — Return opens instead of renaming, the path is always on screen, and dragging a file into a terminal inserts a properly quoted path.
@@ -67,6 +69,12 @@ Work in progress. Built and used daily by one person, so it covers the operation
 | Path field | `Cmd+L` |
 | Run unknown file in Terminal | `Option+Return`, `Option+double-click` |
 
+## Download
+
+Tagged builds are attached to [releases](https://github.com/HenzeLars/RoachExplorer/releases). Unzip and drag `Roach Explorer.app` into `/Applications`.
+
+The bundle is ad-hoc signed and not notarised, so the first launch has to go through right-click → *Open*, or System Settings → Privacy & Security → *Open Anyway*. After that it starts normally.
+
 ## Requirements
 
 - macOS 14 or later
@@ -85,7 +93,7 @@ Or build it as a real app bundle and install it in `/Applications`:
 scripts/make-app.sh
 ```
 
-The bundle script builds the release binary, generates `AppIcon.icns` from `roach-explorer.jpeg` with `sips` and `iconutil`, copies `Resources/Info.plist`, and ad-hoc signs the result. The app is not sandboxed, so it can open anything you can; opening it from Finder is why the ad-hoc signature is there.
+The bundle script builds the release binary, generates `AppIcon.icns` from `roach-explorer.jpeg` with `sips` and `iconutil`, copies `Resources/Info.plist`, and ad-hoc signs the result. The app is not sandboxed, so it can open anything you can; opening it from Finder is why the ad-hoc signature is there. `APP_DIR` and `VERSION` override where the bundle lands and the version stamped into it — the release workflow sets both.
 
 Set `ROACH_START_PATH` to start in a particular folder instead of the last one used:
 
