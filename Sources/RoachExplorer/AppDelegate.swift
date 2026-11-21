@@ -76,18 +76,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "\u{F701}"
         )
         openFolder.keyEquivalentModifierMask = .command
+        fileMenu.addItem(
+            withTitle: "Duplicate",
+            action: #selector(WindowController.duplicateSelection(_:)),
+            keyEquivalent: "d"
+        )
 
         // Edit menu. Standard text actions, routed through the responder chain.
-        // Undo and Redo are intentionally absent: Cmd+Z belongs to the later in-app undo, and until then it does nothing.
+        // Undo and Redo cover the app's paste and move, not text typing.
         let editItem = NSMenuItem()
         mainMenu.addItem(editItem)
         let editMenu = NSMenu(title: "Edit")
         editItem.submenu = editMenu
+        editMenu.addItem(
+            withTitle: "Undo",
+            action: #selector(WindowController.undoLastAction(_:)),
+            keyEquivalent: "z"
+        )
+        let redo = editMenu.addItem(
+            withTitle: "Redo",
+            action: #selector(WindowController.redoLastAction(_:)),
+            keyEquivalent: "Z"
+        )
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        editMenu.addItem(
+            withTitle: "Filter",
+            action: #selector(WindowController.focusFilter(_:)),
+            keyEquivalent: "f"
+        )
 
         // Go menu. Cmd+L focuses the path field that is already on screen.
         let goItem = NSMenuItem()

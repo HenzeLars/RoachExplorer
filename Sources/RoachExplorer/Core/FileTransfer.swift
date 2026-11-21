@@ -12,6 +12,15 @@ enum CollisionChoice {
     case skip
 }
 
+/// One finished item, enough to reverse it. `replacedExisting` means an
+/// overwritten file: that batch cannot be undone.
+struct TransferRecord {
+    let source: URL
+    let target: URL
+    let kind: TransferKind
+    let replacedExisting: Bool
+}
+
 /// Copy or move a batch of files. Collisions are reported as they happen,
 /// not scanned up front. A move onto another volume copies, then deletes
 /// the original only if the copy finished.
@@ -20,6 +29,12 @@ final class FileTransfer {
     private var cancelled = false
     private var applyToAll = false
     private var policy: CollisionChoice?
+    /// Duplicate picks the destination name itself, so no collision is asked.
+    private let namer: ((URL) -> String)?
+
+    init(namer: ((URL) -> String)? = nil) {
+        self.namer = namer
+    }
 
     var onProgress: ((String, Int, Int) -> Void)?
     /// Called off the main thread. Must not return until the user has chosen.
@@ -27,6 +42,9 @@ final class FileTransfer {
     var onCollision: ((String) -> CollisionChoice?)?
     /// Sources that were actually moved. Still valid if a later item fails.
     private(set) var movedSources: [URL] = []
+    /// Every item that landed, in order. Used to select a duplicate batch
+    /// and to undo a paste or a move.
+    private(set) var records: [TransferRecord] = []
 
     func cancel() {
         lock.lock()
@@ -42,10 +60,9 @@ final class FileTransfer {
     }
 
     func run(sources: [URL], kind: TransferKind, into destination: URL) throws -> [URL] {
-        var moved: [URL] = []
         for (index, source) in sources.enumerated() {
             if isCancelled { throw TransferError.cancelled }
-            let name = source.lastPathComponent
+            let name = namer?(source) ?? source.lastPathComponent
             onProgress?(name, index, sources.count)
             if try transfer(source, named: name, kind: kind, into: destination) != nil, kind == .move {
                 movedSources.append(source)
@@ -67,6 +84,7 @@ final class FileTransfer {
             return nil
         }
         var target = existing
+        var replaced = false
         if FileManager.default.fileExists(atPath: existing.path) {
             let choice = try choiceForCollision(named: name)
             switch choice {
@@ -74,6 +92,7 @@ final class FileTransfer {
                 return nil
             case .replace:
                 try FileManager.default.removeItem(at: existing)
+                replaced = true
             case .keepBoth:
                 target = uniqueKeepBoth(named: name, in: destination)
             }
@@ -91,6 +110,9 @@ final class FileTransfer {
                 try FileManager.default.removeItem(at: source)
             }
         }
+        records.append(
+            TransferRecord(source: source, target: target, kind: kind, replacedExisting: replaced)
+        )
         return target
     }
 
@@ -188,17 +210,9 @@ final class FileTransfer {
 
     /// `notes.md` → `notes copy.md`, then `notes copy 2.md`.
     private func uniqueKeepBoth(named name: String, in folder: URL) -> URL {
-        let ns = name as NSString
-        let ext = ns.pathExtension
-        let stem = ns.deletingPathExtension
-        func candidate(_ number: Int) -> String {
-            let suffix = number == 1 ? " copy" : " copy \(number)"
-            if ext.isEmpty { return stem + suffix }
-            return stem + suffix + "." + ext
-        }
         var number = 1
         while true {
-            let url = folder.appendingPathComponent(candidate(number))
+            let url = folder.appendingPathComponent(CopyName.candidate(for: name, number: number))
             if !FileManager.default.fileExists(atPath: url.path) { return url }
             number += 1
         }

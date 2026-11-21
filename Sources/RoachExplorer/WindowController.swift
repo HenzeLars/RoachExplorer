@@ -1,5 +1,7 @@
 import AppKit
 import Darwin
+import QuickLookUI
+import UniformTypeIdentifiers
 
 /// Counts working time only. A collision question pauses it, so a slow
 /// decision does not bring up the progress window.
@@ -42,7 +44,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private let pathBar = PathBar(frame: .zero)
     private let statusBar = StatusBarView(frame: .zero)
     private let sidebar = Sidebar(frame: .zero)
+    private let scrollView = NSScrollView(frame: .zero)
+    private let filterBar = FilterBar(frame: .zero)
+    private var filterVisible = false
     private let statusBarHeight: CGFloat = 24
+    private let fileUndoManager = UndoManager()
+    private var previewKeyMonitor: Any?
     private var currentURL: URL?
     private var backStack: [URL] = []
     private var forwardStack: [URL] = []
@@ -74,36 +81,17 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
         window.delegate = self
 
-        let contentRect = window.contentLayoutRect
-        let pathHeight = PathBar.preferredHeight
-        let sidebarWidth = Sidebar.preferredWidth
-        let listWidth = max(0, contentRect.width - sidebarWidth)
-        let scrollView = NSScrollView(
-            frame: NSRect(
-                x: sidebarWidth,
-                y: statusBarHeight,
-                width: listWidth,
-                height: contentRect.height - statusBarHeight - pathHeight
-            )
-        )
-        scrollView.autoresizingMask = [.width, .height]
+        let contentView = window.contentView ?? NSView()
+        window.contentView = contentView
+
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets()
         scrollView.clipsToBounds = true
         scrollView.documentView = fileTable
-        let contentView = window.contentView ?? NSView()
         contentView.addSubview(scrollView)
-        window.contentView = contentView
 
-        sidebar.frame = NSRect(
-            x: 0,
-            y: 0,
-            width: sidebarWidth,
-            height: contentRect.height - pathHeight
-        )
-        sidebar.autoresizingMask = [.height, .maxXMargin]
         contentView.addSubview(sidebar)
         sidebar.setFavorites(settings.favorites)
         sidebar.onNavigate = { [weak self] url in
@@ -120,18 +108,19 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             SettingsStore.save(stored)
         }
 
-        statusBar.frame = NSRect(x: sidebarWidth, y: 0, width: listWidth, height: statusBarHeight)
-        statusBar.autoresizingMask = [.width, .maxYMargin]
         contentView.addSubview(statusBar)
-
-        pathBar.frame = NSRect(
-            x: 0,
-            y: contentRect.height - pathHeight,
-            width: contentRect.width,
-            height: pathHeight
-        )
-        pathBar.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(pathBar)
+        contentView.addSubview(filterBar)
+
+        filterBar.onChange = { [weak self] text in
+            guard let self else { return }
+            self.fileTable.filterText = text
+            self.updateStatusBar()
+        }
+        filterBar.onCancel = { [weak self] in
+            self?.setFilterVisible(false)
+        }
+
         pathBar.onNavigate = { [weak self] url in
             self?.show(folder: url)
         }
@@ -154,6 +143,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
         fileTable.onRename = { [weak self] in
             self?.renameSelection(nil)
+        }
+        fileTable.onQuickLook = { [weak self] in
+            self?.toggleQuickLook(nil)
         }
         fileTable.onCanCommitEdit = { [weak self] url, name in
             self?.canCommit(url: url, name: name) ?? true
@@ -181,6 +173,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         )
         window.initialFirstResponder = fileTable
         installSwipeMonitor()
+        installPreviewKeyMonitor()
 
         if let frame = settings.windowFrame {
             window.setFrame(
@@ -191,7 +184,55 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             window.center()
         }
 
+        layoutContent()
         show(folder: resolveStartURL(override: startingURL, settings: settings), remember: false)
+    }
+
+    /// One place for the frames. The filter row lives between the path bar
+    /// and the list, so showing it shortens the list.
+    private func layoutContent() {
+        guard let contentView = window?.contentView else { return }
+        let size = contentView.bounds.size
+        let pathHeight = PathBar.preferredHeight
+        let sidebarWidth = Sidebar.preferredWidth
+        let filterHeight = filterVisible ? FilterBar.preferredHeight : 0
+        let listTop = size.height - pathHeight - filterHeight
+
+        pathBar.frame = NSRect(
+            x: 0,
+            y: size.height - pathHeight,
+            width: size.width,
+            height: pathHeight
+        )
+        filterBar.frame = NSRect(
+            x: sidebarWidth,
+            y: size.height - pathHeight - filterHeight,
+            width: max(0, size.width - sidebarWidth),
+            height: filterHeight
+        )
+        filterBar.isHidden = !filterVisible
+        sidebar.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: sidebarWidth,
+            height: max(0, size.height - pathHeight)
+        )
+        scrollView.frame = NSRect(
+            x: sidebarWidth,
+            y: statusBarHeight,
+            width: max(0, size.width - sidebarWidth),
+            height: max(0, listTop - statusBarHeight)
+        )
+        statusBar.frame = NSRect(
+            x: sidebarWidth,
+            y: 0,
+            width: max(0, size.width - sidebarWidth),
+            height: statusBarHeight
+        )
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        layoutContent()
     }
 
     @available(*, unavailable)
@@ -220,6 +261,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     /// first show. A vanished folder is replaced by the nearest parent that exists.
     func show(folder url: URL, remember: Bool = true) {
         let destination = nearestExistingAncestor(of: url)
+        if filterVisible { setFilterVisible(false) }
         if remember, let current = currentURL, current != destination {
             backStack.append(current)
             forwardStack.removeAll()
@@ -269,6 +311,72 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         updateStatusBar()
     }
 
+    /// Cmd+F. Shows the filter row that is already part of the window.
+    @objc func focusFilter(_ sender: Any?) {
+        guard !pathBar.isEditingField, !fileTable.isEditingName else { return }
+        setFilterVisible(true)
+    }
+
+    private func setFilterVisible(_ visible: Bool) {
+        guard filterVisible != visible else {
+            if visible { filterBar.focus() }
+            return
+        }
+        filterVisible = visible
+        filterBar.field.stringValue = ""
+        fileTable.filterText = ""
+        layoutContent()
+        if visible {
+            filterBar.focus()
+        } else {
+            window?.makeFirstResponder(fileTable)
+        }
+        updateStatusBar()
+    }
+
+    /// Space. Opens the Quick Look panel for the selection, or closes it.
+    @objc func toggleQuickLook(_ sender: Any?) {
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if panel.isVisible {
+            closeQuickLook()
+            return
+        }
+        guard !fileTable.selectedItems.isEmpty else { return }
+        panel.makeKeyAndOrderFront(nil)
+        panel.reloadData()
+    }
+
+    private func closeQuickLook() {
+        QLPreviewPanel.shared()?.orderOut(nil)
+        window?.makeFirstResponder(fileTable)
+    }
+
+    /// The panel previews whatever is selected, so a selection change while
+    /// it is open reloads it. An empty selection closes it.
+    private func syncQuickLook() {
+        guard let panel = QLPreviewPanel.shared(), panel.isVisible,
+              (panel.dataSource as AnyObject?) === self else { return }
+        if fileTable.selectedItems.isEmpty {
+            closeQuickLook()
+        } else {
+            panel.reloadData()
+        }
+    }
+
+    /// The panel is its own window, so a local monitor is what sees Space
+    /// and Escape while it is key.
+    private func installPreviewKeyMonitor() {
+        previewKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let panel = QLPreviewPanel.shared(),
+                  panel.isVisible, event.window === panel else { return event }
+            if event.keyCode == 49 || event.keyCode == 53 {
+                self.closeQuickLook()
+                return nil
+            }
+            return event
+        }
+    }
+
     @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(goBack(_:)):
@@ -278,30 +386,48 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         case #selector(goUp(_:)):
             return currentURL?.standardizedFileURL.path != "/"
         case #selector(openSelection(_:)), #selector(openFocusedFolder(_:)):
-            return !pathBar.isEditingField && !fileTable.isEditingName
+            return !isEditingText
         case #selector(newFolder(_:)), #selector(newFile(_:)):
+            // Allowed while filtering: the action clears the filter so the
+            // new row is visible and editable.
             return !pathBar.isEditingField && !fileTable.isEditingName
         case #selector(renameSelection(_:)):
-            return !pathBar.isEditingField && !fileTable.isEditingName && fileTable.rowForRename >= 0
+            return !isEditingText && fileTable.rowForRename >= 0
         case #selector(NSText.cut(_:)), #selector(NSText.copy(_:)):
-            return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
+            return !isEditingText && !fileTable.selectedItems.isEmpty
         case #selector(NSText.paste(_:)):
-            return !pathBar.isEditingField && !fileTable.isEditingName && FileClipboard.shared.canPaste
+            return !isEditingText && FileClipboard.shared.canPaste
+        case #selector(duplicateSelection(_:)):
+            return !isEditingText && !fileTable.selectedItems.isEmpty
         case #selector(showInfo(_:)):
             menuItem.title = fileTable.infoActionTitle
-            return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
+            return !isEditingText && !fileTable.selectedItems.isEmpty
         case #selector(moveToTrash(_:)), #selector(deleteImmediately(_:)):
-            return !pathBar.isEditingField && !fileTable.isEditingName && !fileTable.selectedItems.isEmpty
+            return !isEditingText && !fileTable.selectedItems.isEmpty
+        case #selector(focusFilter(_:)):
+            return !pathBar.isEditingField && !fileTable.isEditingName
+        case #selector(undoLastAction(_:)):
+            menuItem.title = fileUndoManager.undoMenuItemTitle
+            return !isEditingText && fileUndoManager.canUndo
+        case #selector(redoLastAction(_:)):
+            menuItem.title = fileUndoManager.redoMenuItemTitle
+            return !isEditingText && fileUndoManager.canRedo
         default:
             return true
         }
+    }
+
+    /// Typing goes to one of three editors. File commands stay out of their way.
+    private var isEditingText: Bool {
+        pathBar.isEditingField || fileTable.isEditingName || filterBar.isEditing
     }
 
     /// Cmd+Shift+N. The cockroach name is selected, so typing replaces it.
     /// Return keeps the folder. Escape deletes it. A second Return enters it.
     @objc func newFolder(_ sender: Any?) {
         guard let currentURL else { return }
-        let name = CockroachName.next(avoiding: fileTable.items.map(\.name))
+        if filterVisible { setFilterVisible(false) }
+        let name = CockroachName.next(avoiding: fileTable.unfilteredItems.map(\.name))
         let url = currentURL.appendingPathComponent(name)
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
@@ -315,7 +441,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     /// Empty file, same edit as a new folder. Return keeps it. Escape deletes it.
     @objc func newFile(_ sender: Any?) {
         guard let currentURL else { return }
-        let name = untitledName(avoiding: fileTable.items.map(\.name))
+        if filterVisible { setFilterVisible(false) }
+        let name = untitledName(avoiding: fileTable.unfilteredItems.map(\.name))
         let url = currentURL.appendingPathComponent(name)
         do {
             try Data().write(to: url, options: .withoutOverwriting)
@@ -414,10 +541,10 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func present(message: String) {
+    private func present(message: String, title: String = "Could not delete") {
         guard let window else { return }
         let alert = NSAlert()
-        alert.messageText = "Could not delete"
+        alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window, completionHandler: nil)
@@ -442,10 +569,138 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         startTransfer(sources: clip.urls, kind: clip.kind, into: currentURL)
     }
 
-    /// Paste, and a drop. Same collision question, same cross-volume rule.
-    private func startTransfer(sources: [URL], kind: TransferKind, into destination: URL) {
+    /// Cmd+D. "name copy", then "name copy 2". No collision question: the
+    /// name is picked before the copy starts. The copies end up selected.
+    @objc func duplicateSelection(_ sender: Any?) {
+        guard let currentURL else { return }
+        let items = fileTable.selectedItems
+        guard !items.isEmpty else { return }
+        let namer = DuplicateNamer(existing: fileTable.unfilteredItems.map(\.url), folder: currentURL)
+        startTransfer(
+            sources: items.map(\.url),
+            kind: .copy,
+            into: currentURL,
+            namer: namer.name(for:),
+            selectCreated: true,
+            undoable: false
+        )
+    }
+
+    /// Open With, from the context menu. The app URL rides on the menu item.
+    @objc func openSelectionWithApp(_ sender: Any?) {
+        guard let app = (sender as? NSMenuItem)?.representedObject as? URL else { return }
+        let urls = fileTable.selectedItems.map(\.url)
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.open(
+            urls,
+            withApplicationAt: app,
+            configuration: NSWorkspace.OpenConfiguration()
+        )
+    }
+
+    /// Open With → Other…. A sheet, so the window stays where it is.
+    @objc func openSelectionWithOtherApp(_ sender: Any?) {
+        guard let window else { return }
+        let urls = fileTable.selectedItems.map(\.url)
+        guard !urls.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Choose an application"
+        panel.prompt = "Open"
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let app = panel.url else { return }
+            NSWorkspace.shared.open(
+                urls,
+                withApplicationAt: app,
+                configuration: NSWorkspace.OpenConfiguration()
+            )
+        }
+    }
+
+    @objc func undoLastAction(_ sender: Any?) {
+        guard !isEditingText else { return }
+        fileUndoManager.undo()
+    }
+
+    @objc func redoLastAction(_ sender: Any?) {
+        guard !isEditingText else { return }
+        fileUndoManager.redo()
+    }
+
+    /// Paste and move can be reversed. One overwrite disables the whole batch,
+    /// because the file it replaced is gone.
+    private func registerUndo(records: [TransferRecord]) {
+        guard !records.isEmpty, !records.contains(where: { $0.replacedExisting }) else { return }
+        fileUndoManager.registerUndo(withTarget: self) { controller in
+            controller.undoTransfer(records)
+        }
+        fileUndoManager.setActionName(records.contains { $0.kind == .move } ? "Move" : "Paste")
+    }
+
+    private func undoTransfer(_ records: [TransferRecord]) {
+        var failures: [String] = []
+        for record in records {
+            do {
+                switch record.kind {
+                case .copy:
+                    try FileManager.default.removeItem(at: record.target)
+                case .move:
+                    try FileManager.default.moveItem(at: record.target, to: record.source)
+                }
+            } catch {
+                failures.append("\(record.target.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        reload(nil)
+        fileUndoManager.registerUndo(withTarget: self) { controller in
+            controller.redoTransfer(records)
+        }
+        fileUndoManager.setActionName(records.contains { $0.kind == .move } ? "Move" : "Paste")
+        if !failures.isEmpty {
+            present(message: failures.joined(separator: "\n"), title: "Could not undo")
+        }
+    }
+
+    private func redoTransfer(_ records: [TransferRecord]) {
+        var failures: [String] = []
+        for record in records {
+            do {
+                switch record.kind {
+                case .copy:
+                    try FileManager.default.copyItem(at: record.source, to: record.target)
+                case .move:
+                    try FileManager.default.moveItem(at: record.source, to: record.target)
+                }
+            } catch {
+                failures.append("\(record.target.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        reload(nil)
+        fileUndoManager.registerUndo(withTarget: self) { controller in
+            controller.undoTransfer(records)
+        }
+        fileUndoManager.setActionName(records.contains { $0.kind == .move } ? "Move" : "Paste")
+        if !failures.isEmpty {
+            present(message: failures.joined(separator: "\n"), title: "Could not redo")
+        }
+    }
+
+    /// Paste, a drop, or a duplicate. Same collision question, same
+    /// cross-volume rule. `namer` picks the destination name itself;
+    /// `selectCreated` selects the new rows when the run is done.
+    private func startTransfer(
+        sources: [URL],
+        kind: TransferKind,
+        into destination: URL,
+        namer: ((URL) -> String)? = nil,
+        selectCreated: Bool = false,
+        undoable: Bool = true
+    ) {
         guard !sources.isEmpty else { return }
-        let transfer = FileTransfer()
+        let transfer = FileTransfer(namer: namer)
         let progress = TransferProgress()
         let title = kind == .move ? "Moving" : "Copying"
         let clock = WorkClock()
@@ -491,10 +746,19 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             clock.resume()
             defer {
                 clock.cancel()
+                let records = transfer.records
+                let created = records.map(\.target)
                 DispatchQueue.main.async {
                     progress.close()
                     self?.refreshCutAppearance()
                     self?.reload(nil)
+                    guard let self else { return }
+                    if selectCreated {
+                        self.select(urls: created)
+                    }
+                    if undoable {
+                        self.registerUndo(records: records)
+                    }
                 }
             }
             do {
@@ -583,8 +847,10 @@ final class WindowController: NSWindowController, NSWindowDelegate {
            trimmed == url.lastPathComponent {
             return true
         }
-        guard let row = conflictingRow(named: trimmed, except: url) else { return true }
-        fileTable.flash(row: row)
+        guard let conflict = conflictingURL(named: trimmed, except: url) else { return true }
+        if let row = fileTable.items.firstIndex(where: { sameFile($0.url, conflict) }) {
+            fileTable.flash(row: row)
+        }
         NSSound.beep()
         return false
     }
@@ -599,12 +865,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             creatingURL = nil
             return
         }
-        if conflictingRow(named: trimmed, except: url) != nil {
+        if let conflict = conflictingURL(named: trimmed, except: url) {
             // Click-away. The editor is already gone, so open it again on the typed name.
-            if let row = conflictingRow(named: trimmed, except: url) {
+            if let row = fileTable.items.firstIndex(where: { sameFile($0.url, conflict) }) {
                 fileTable.flash(row: row)
-                NSSound.beep()
             }
+            NSSound.beep()
             if let row = fileTable.items.firstIndex(where: { $0.url == url }) {
                 DispatchQueue.main.async { [weak self] in
                     self?.fileTable.beginEditing(row: row, selectingAll: true, text: trimmed)
@@ -631,10 +897,11 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func conflictingRow(named name: String, except url: URL) -> Int? {
-        fileTable.items.firstIndex {
+    /// A name already in the folder, whether the filter currently shows it or not.
+    private func conflictingURL(named name: String, except url: URL) -> URL? {
+        fileTable.unfilteredItems.first {
             !sameFile($0.url, url) && $0.name.compare(name, options: .caseInsensitive) == .orderedSame
-        }
+        }?.url
     }
 
     private func sameFile(_ a: URL, _ b: URL) -> Bool {
@@ -882,6 +1149,18 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             text += ", \(Format.size(bytes))"
         }
         statusBar.text = text
+        syncQuickLook()
+    }
+
+    /// Selects the rows whose files are in `urls`, if the filter still shows them.
+    private func select(urls: [URL]) {
+        let paths = Set(urls.map { $0.standardizedFileURL.path })
+        let rows = IndexSet(fileTable.items.indices.filter {
+            paths.contains(fileTable.items[$0].url.standardizedFileURL.path)
+        })
+        guard let first = rows.first else { return }
+        fileTable.selectRowIndexes(rows, byExtendingSelection: false)
+        fileTable.scrollRowToVisible(first)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -890,6 +1169,13 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         if let swipeMonitor {
             NSEvent.removeMonitor(swipeMonitor)
             self.swipeMonitor = nil
+        }
+        if let previewKeyMonitor {
+            NSEvent.removeMonitor(previewKeyMonitor)
+            self.previewKeyMonitor = nil
+        }
+        if let panel = QLPreviewPanel.shared(), (panel.dataSource as AnyObject?) === self {
+            panel.orderOut(nil)
         }
         guard let window, let currentURL else { return }
         var settings = SettingsStore.load()
@@ -902,5 +1188,33 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             height: frame.height
         )
         SettingsStore.save(settings)
+    }
+}
+
+/// Quick Look asks the responder chain for a controller. This window
+/// answers while it is the key window, and previews the selection.
+extension WindowController: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        true
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        fileTable.selectedItems.count
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        let items = fileTable.selectedItems
+        guard index >= 0, index < items.count else { return nil }
+        return items[index].url as NSURL
     }
 }

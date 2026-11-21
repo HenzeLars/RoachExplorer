@@ -15,8 +15,11 @@ final class FileTable: NSTableView {
     var onCanCommitEdit: ((URL, String) -> Bool)?
     /// Editing ended. `cancelled` is Escape. Click-away and Return are not cancelled.
     var onEditEnded: ((URL, String, Bool) -> Void)?
+    /// Space previews the selection with Quick Look.
+    var onQuickLook: (() -> Void)?
 
     private var storedItems: [FileItem] = []
+    private var allItems: [FileItem] = []
 
     /// The rows of the table, always in the current sort order.
     /// A computed setter: sorting the backing store in place would not
@@ -24,19 +27,39 @@ final class FileTable: NSTableView {
     var items: [FileItem] {
         get { storedItems }
         set {
-            // Selection survives a refresh if the files are still there.
-            let selectedURLs = Set(
-                selectedRowIndexes.compactMap { $0 < storedItems.count ? storedItems[$0].url : nil }
-            )
-            storedItems = newValue
-            applySort()
-            reloadData()
-            let rows = IndexSet(storedItems.indices.filter { selectedURLs.contains(storedItems[$0].url) })
-            if !rows.isEmpty {
-                selectRowIndexes(rows, byExtendingSelection: false)
-            } else {
-                deselectAll(nil)
-            }
+            allItems = newValue
+            rebuild()
+        }
+    }
+
+    /// Everything in the open folder, including rows the filter hides.
+    /// New names must not clash with these.
+    var unfilteredItems: [FileItem] { allItems }
+
+    /// Cmd+F. Case-insensitive substring of the name. Empty means no filter.
+    var filterText: String = "" {
+        didSet {
+            if filterText != oldValue { rebuild() }
+        }
+    }
+
+    /// Re-filters, re-sorts, and reloads. Selection survives if the rows are
+    /// still visible.
+    private func rebuild() {
+        let selectedURLs = Set(
+            selectedRowIndexes.compactMap { $0 < storedItems.count ? storedItems[$0].url : nil }
+        )
+        let needle = filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        storedItems = needle.isEmpty
+            ? allItems
+            : allItems.filter { $0.name.lowercased().contains(needle) }
+        applySort()
+        reloadData()
+        let rows = IndexSet(storedItems.indices.filter { selectedURLs.contains(storedItems[$0].url) })
+        if !rows.isEmpty {
+            selectRowIndexes(rows, byExtendingSelection: false)
+        } else {
+            deselectAll(nil)
         }
     }
 
@@ -171,6 +194,12 @@ final class FileTable: NSTableView {
         if event.keyCode == 53 {
             onCancelCut?()
             deselectAll(nil)
+            return
+        }
+        // Space previews the selection. It must not reach type-ahead.
+        if event.keyCode == 49,
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+            onQuickLook?()
             return
         }
         // Delete (51) and Forward Delete (117). Both move the selection to the Trash.
@@ -360,6 +389,9 @@ final class FileTable: NSTableView {
         let menu = NSMenu()
         if clicked >= 0 {
             menu.addItem(withTitle: "Open", action: #selector(WindowController.openSelection(_:)), keyEquivalent: "")
+            let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            openWith.submenu = openWithSubmenu()
+            menu.addItem(openWith)
             menu.addItem(withTitle: infoActionTitle, action: #selector(WindowController.showInfo(_:)), keyEquivalent: "")
             menu.addItem(.separator())
         }
@@ -370,12 +402,44 @@ final class FileTable: NSTableView {
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
         if clicked >= 0 {
+            menu.addItem(withTitle: "Duplicate", action: #selector(WindowController.duplicateSelection(_:)), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "Rename", action: #selector(WindowController.renameSelection(_:)), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "Move to Trash", action: #selector(WindowController.moveToTrash(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Delete Immediately", action: #selector(WindowController.deleteImmediately(_:)), keyEquivalent: "")
         }
+        return menu
+    }
+
+    /// The apps that can open the selection, plus Other….
+    /// Opening is the window's job; the items carry the app URL.
+    private func openWithSubmenu() -> NSMenu? {
+        let urls = selectedItems.map(\.url)
+        guard let first = urls.first else { return nil }
+        let menu = NSMenu(title: "Open With")
+        let apps = NSWorkspace.shared.urlsForApplications(toOpen: first)
+        for app in apps {
+            let title = FileManager.default.displayName(atPath: app.path)
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(WindowController.openSelectionWithApp(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = app
+            let icon = NSWorkspace.shared.icon(forFile: app.path)
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+            menu.addItem(item)
+        }
+        if !apps.isEmpty {
+            menu.addItem(.separator())
+        }
+        menu.addItem(
+            withTitle: "Other…",
+            action: #selector(WindowController.openSelectionWithOtherApp(_:)),
+            keyEquivalent: ""
+        )
         return menu
     }
 
