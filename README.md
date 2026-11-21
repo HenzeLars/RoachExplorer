@@ -8,6 +8,8 @@ It is a working file manager, not a Finder clone: dense list, always-visible pat
 
 Work in progress. Built and used daily by one person, so it covers the operations that came up rather than every corner of the file system.
 
+![Roach Explorer: path bar and segments at the top, places and favourites on the left, a dense sortable list, counts and size in the status bar](screenshot.png)
+
 ## Features
 
 **Navigation**
