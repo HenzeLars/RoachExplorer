@@ -5,7 +5,8 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 name="Roach Explorer"
-app="/Applications/${name}.app"
+app_dir="${APP_DIR:-/Applications}"
+app="${app_dir}/${name}.app"
 executable="$app/Contents/MacOS/RoachExplorer"
 
 cd "$root"
@@ -29,6 +30,14 @@ cp "$root/Resources/Info.plist" "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
 cp "$root/.build/release/RoachExplorer" "$executable"
 chmod 755 "$executable"
+
+# Optional: stamp a version into the bundle, from a tag like v0.1 in a release build.
+if [ -n "${VERSION:-}" ]; then
+  short="${VERSION#v}"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${short}" "$app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${short}" "$app/Contents/Info.plist"
+fi
+
 xattr -cr "$app" 2>/dev/null || true
 codesign --force --sign - "$app"
 
