@@ -6,7 +6,10 @@ import AppKit
 final class InfoWindow: NSWindowController {
     private let kindValue = InfoWindow.valueField()
     private let sizeValue = InfoWindow.valueField()
+    private let createdValue = InfoWindow.valueField()
     private let whenValue = InfoWindow.valueField()
+    private let ownerValue = InfoWindow.valueField()
+    private let groupValue = InfoWindow.valueField()
     private let whereValue = InfoWindow.valueField()
     private let accessCaption = NSTextField(labelWithString: "Access")
     private let permissions = PermissionEditor()
@@ -16,7 +19,7 @@ final class InfoWindow: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 328),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 418),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -25,9 +28,12 @@ final class InfoWindow: NSWindowController {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         let content = window.contentView ?? NSView()
-        addRow("Kind", kindValue, y: 280, in: content)
-        addRow("Size", sizeValue, y: 250, in: content)
-        addRow("Modified", whenValue, y: 220, in: content)
+        addRow("Kind", kindValue, y: 370, in: content)
+        addRow("Size", sizeValue, y: 340, in: content)
+        addRow("Created", createdValue, y: 310, in: content)
+        addRow("Modified", whenValue, y: 280, in: content)
+        addRow("Owner", ownerValue, y: 250, in: content)
+        addRow("Group", groupValue, y: 220, in: content)
         addRow("Where", whereValue, y: 164, in: content)
         whereValue.frame.size.height = 36
         whereValue.maximumNumberOfLines = 2
@@ -70,10 +76,22 @@ final class InfoWindow: NSWindowController {
         if many {
             let folders = items.filter { $0.isFolder && !$0.isLink }.count
             kindValue.stringValue = "\(items.count - folders) files, \(folders) folders"
+            // A summary does not claim one date or one owner.
             whenValue.stringValue = "—"
+            createdValue.stringValue = "—"
+            ownerValue.stringValue = "—"
+            groupValue.stringValue = "—"
         } else if let item = items.first {
             kindValue.stringValue = item.kind
             whenValue.stringValue = Format.date(item.modified)
+            createdValue.stringValue = Permissions.created(of: item.url).map(Format.date) ?? "—"
+            if let names = Permissions.ownership(of: item.url) {
+                ownerValue.stringValue = names.owner
+                groupValue.stringValue = names.group
+            } else {
+                ownerValue.stringValue = "—"
+                groupValue.stringValue = "—"
+            }
             if let url = editingURL, let mode = Permissions.mode(of: url) {
                 permissions.setMode(mode, lockExecute: Permissions.isDirectory(url))
             }

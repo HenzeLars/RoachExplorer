@@ -38,4 +38,42 @@ enum Permissions {
         }
         return text
     }
+
+    /// Who owns the item itself. A symlink reports its own owner, not the target's,
+    /// the same way the mode bits above do. An account the directory service no
+    /// longer knows falls back to its number, which is what Finder shows too.
+    static func ownership(of url: URL) -> (owner: String, group: String)? {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return nil }
+        let owner = accountName(info.st_uid) ?? String(info.st_uid)
+        let group = groupName(info.st_gid) ?? String(info.st_gid)
+        return (owner, group)
+    }
+
+    /// When the item itself was created. Not the target of a symlink.
+    static func created(of url: URL) -> Date? {
+        (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+    }
+
+    // `_r` variants: getpwuid and getgrgid share one internal buffer, and this
+    // runs on whatever queue asked for the window.
+    private static func accountName(_ uid: uid_t) -> String? {
+        var record = passwd()
+        var buffer = [CChar](repeating: 0, count: 1024)
+        var found: UnsafeMutablePointer<passwd>?
+        let status = getpwuid_r(uid, &record, &buffer, buffer.count, &found)
+        guard status == 0, found != nil else { return nil }
+        let name = String(cString: record.pw_name)
+        return name.isEmpty ? nil : name
+    }
+
+    private static func groupName(_ gid: gid_t) -> String? {
+        var record = group()
+        var buffer = [CChar](repeating: 0, count: 1024)
+        var found: UnsafeMutablePointer<group>?
+        let status = getgrgid_r(gid, &record, &buffer, buffer.count, &found)
+        guard status == 0, found != nil else { return nil }
+        let name = String(cString: record.gr_name)
+        return name.isEmpty ? nil : name
+    }
 }

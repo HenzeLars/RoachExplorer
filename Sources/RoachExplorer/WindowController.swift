@@ -165,6 +165,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         pathBar.onDrop = { [weak self] urls, destination, copying in
             self?.startTransfer(sources: urls, kind: copying ? .copy : .move, into: destination)
         }
+        fileTable.onSpringOpen = { [weak self] url in
+            self?.show(folder: url)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(clipboardChanged(_:)),

@@ -32,7 +32,7 @@ Work in progress. Built and used daily by one person, so it covers the operation
 
 - New folder with an inline editor and a generated name, new empty file, rename with the stem preselected, duplicate as `name copy`.
 - Copy, cut, and paste. Cut dims the rows and does nothing until you paste. Escape cancels.
-- Move by dragging, copy by dragging with Option. Drop onto a folder row, a path segment, or a sidebar item.
+- Move by dragging, copy by dragging with Option. Drop onto a folder row, a path segment, or a sidebar item. Rest on a folder row mid-drag and it springs open, so a destination three levels down is one gesture.
 - Move to Trash, and Delete Immediately from the context menu for the cases where Trash is not what you meant.
 - Undo and redo for paste and move. An operation that replaced an existing file is not undoable, and says so.
 - Name collisions ask Replace, Keep Both, or Skip, with *apply to all* on by default. Nothing is overwritten silently.
@@ -41,8 +41,8 @@ Work in progress. Built and used daily by one person, so it covers the operation
 
 **Getting at things**
 
-- Quick Look with Space, Get Info with `Cmd+I` for one item's details or a multi-selection summary — including the recursive size of folders.
-- Permissions are editable in the Info window by clicking the mode bits.
+- Quick Look with Space, Get Info with `Cmd+I` for one item's details or a multi-selection summary — including the recursive size of folders, the created date, and the owner and group. A summary does not claim one date or one owner; it shows a dash.
+- Permissions are editable in the Info window by clicking the mode bits. The owner and group are read-only: changing them can need root.
 - Open With, including *Other…*, from the context menu.
 - Filter the current folder by name with `Cmd+F`. It narrows what is listed; it never searches the disk.
 - Drag a selection into Terminal, iTerm, or Warp and get a shell-escaped path: single quotes, embedded quotes handled, one argument per file.

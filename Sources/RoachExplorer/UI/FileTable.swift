@@ -17,9 +17,15 @@ final class FileTable: NSTableView {
     var onEditEnded: ((URL, String, Bool) -> Void)?
     /// Space previews the selection with Quick Look.
     var onQuickLook: (() -> Void)?
+    /// A folder row held under a drag for a moment. Spring-loaded folders:
+    /// the drag keeps going, the window shows the folder underneath.
+    var onSpringOpen: ((URL) -> Void)?
 
     private var storedItems: [FileItem] = []
     private var allItems: [FileItem] = []
+    /// A folder row that has been held under a drag, and the wait for it.
+    private var springTimer: Timer?
+    private var springTarget: URL?
 
     /// The rows of the table, always in the current sort order.
     /// A computed setter: sorting the backing store in place would not
@@ -574,6 +580,60 @@ extension FileTable {
     }
 }
 
+// MARK: - Spring-loaded folders
+
+/// Resting the pointer on a folder row during a drag opens it, so a destination
+/// three levels down is one gesture. The drag survives the folder change: only
+/// the rows behind the pointer are replaced, not the dragging session.
+extension FileTable {
+    /// Long enough not to fire while dragging across a row, short enough not
+    /// to feel stuck. Finder is about half a second.
+    private static let springDelay: TimeInterval = 0.55
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let operation = super.draggingUpdated(sender)
+        let point = convert(sender.draggingLocation, from: nil)
+        let row = self.row(at: point)
+        let urls = DragFiles.urls(from: sender.draggingPasteboard)
+        var folder: URL?
+        if row >= 0, row < items.count {
+            folder = DropTarget.folder(resolving: items[row].url)
+        }
+        if let folder, DropTarget.canDrop(urls, into: folder) {
+            scheduleSpringLoad(for: folder)
+        } else {
+            cancelSpringLoad()
+        }
+        return operation
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        cancelSpringLoad()
+        super.draggingExited(sender)
+    }
+
+    /// Moving to another row restarts the wait. Staying put does not.
+    private func scheduleSpringLoad(for folder: URL) {
+        guard springTarget != folder else { return }
+        cancelSpringLoad()
+        springTarget = folder
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.springDelay, repeats: false) { [weak self] _ in
+            guard let self, self.springTarget == folder else { return }
+            self.springTimer = nil
+            self.springTarget = nil
+            self.onSpringOpen?(folder)
+        }
+        timer.tolerance = 0.1
+        springTimer = timer
+    }
+
+    private func cancelSpringLoad() {
+        springTimer?.invalidate()
+        springTimer = nil
+        springTarget = nil
+    }
+}
+
 extension FileTable: NSTextFieldDelegate {
     func control(
         _ control: NSControl,
@@ -677,6 +737,7 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
         row: Int,
         dropOperation: NSTableView.DropOperation
     ) -> Bool {
+        cancelSpringLoad()
         let urls = DragFiles.urls(from: info.draggingPasteboard)
         guard let destination = dropDestination(row: row, operation: dropOperation),
               DropTarget.canDrop(urls, into: destination) else { return false }
