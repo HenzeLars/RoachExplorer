@@ -1,2 +1,6 @@
 .build/
 .DS_Store
+
+# Local planning notes, kept out of the published history
+Project.md
+PROGRESS.md
