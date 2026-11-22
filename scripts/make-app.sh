@@ -31,9 +31,11 @@ printf 'APPL????' > "$app/Contents/PkgInfo"
 cp "$root/.build/release/RoachExplorer" "$executable"
 chmod 755 "$executable"
 
-# Optional: stamp a version into the bundle, from a tag like v0.1 in a release build.
-if [ -n "${VERSION:-}" ]; then
-  short="${VERSION#v}"
+# Optional: stamp a version into the bundle. A release passes VERSION (for
+# example v0.1.2); a local build takes the newest tag so About is truthful.
+version="${VERSION:-$(git describe --tags --abbrev=0 2>/dev/null || true)}"
+if [ -n "$version" ]; then
+  short="${version#v}"
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${short}" "$app/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${short}" "$app/Contents/Info.plist"
 fi

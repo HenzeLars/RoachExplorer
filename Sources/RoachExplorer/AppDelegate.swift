@@ -16,6 +16,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openWindow(startingAt: current)
     }
 
+    /// The standard About panel: icon, name, version from the bundle, and a
+    /// short description with the repository as a link.
+    @objc func showAbout(_ sender: Any?) {
+        let repository = "https://github.com/HenzeLars/RoachExplorer"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let text = NSMutableAttributedString(string: """
+        A small, native file manager for macOS. Browse, move, copy, and change \
+        permissions without leaving the keyboard.
+
+        \(repository)
+        MIT licensed.
+        """)
+        text.addAttribute(
+            .font,
+            value: NSFont.systemFont(ofSize: 11),
+            range: NSRange(location: 0, length: text.length)
+        )
+        if let range = text.string.range(of: repository) {
+            text.addAttribute(.link, value: repository, range: NSRange(range, in: text.string))
+        }
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [
+            .applicationName: "Roach Explorer",
+            .credits: text,
+            // No build number: the version line would read "0.1.2 (0.1.2)".
+            .version: "",
+        ]
+        if let version, !version.isEmpty {
+            options[.applicationVersion] = version
+        }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     func openWindow(startingAt url: URL?) {
         let controller = WindowController(startingURL: url)
         controller.onOpenWindow = { [weak self] url in
@@ -38,7 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
         appItem.submenu = appMenu
-        appMenu.addItem(withTitle: "About Roach Explorer", action: nil, keyEquivalent: "")
+        let about = appMenu.addItem(
+            withTitle: "About Roach Explorer",
+            action: #selector(showAbout(_:)),
+            keyEquivalent: ""
+        )
+        about.target = self
         appMenu.addItem(.separator())
         let servicesMenu = NSMenu(title: "Services")
         let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
