@@ -102,6 +102,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         sidebar.onDrop = { [weak self] urls, destination, copying in
             self?.startTransfer(sources: urls, kind: copying ? .copy : .move, into: destination)
         }
+        sidebar.onSpringOpen = { [weak self] url in
+            self?.show(folder: url)
+        }
         sidebar.onFavoritesChanged = { paths in
             var stored = SettingsStore.load()
             stored.favorites = paths
@@ -635,6 +638,34 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             selectCreated: true,
             undoable: false
         )
+    }
+
+    /// Make Alias, from the context menu and the File menu. One alias per
+    /// selected item, in the open folder, named the way Finder names them.
+    @objc func makeAlias(_ sender: Any?) {
+        guard let currentURL, !fileTable.selectedItems.isEmpty else { return }
+        if filterVisible { setFilterVisible(false) }
+        var created: [URL] = []
+        var failure: Error?
+        for item in fileTable.selectedItems {
+            do {
+                created.append(
+                    try Alias.write(
+                        for: item.url,
+                        in: currentURL,
+                        taken: fileTable.unfilteredItems.map(\.url) + created
+                    )
+                )
+            } catch {
+                failure = error
+                break
+            }
+        }
+        ignoreWatchUntil = Date().addingTimeInterval(0.6)
+        fileTable.items = FileSystem.listItems(in: currentURL)
+        updateStatusBar()
+        select(urls: created)
+        if let failure { present(failure) }
     }
 
     /// Open With, from the context menu. The app URL rides on the menu item.

@@ -10,11 +10,16 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
     /// File URLs dropped on a row. `copying` is Option.
     var onDrop: ((_ urls: [URL], _ destination: URL, _ copying: Bool) -> Void)?
     var onFavoritesChanged: (([String]) -> Void)?
+    /// A row held under a drag. The window peeks into that folder, so a drop
+    /// can be made deeper without a sidebar tree.
+    var onSpringOpen: ((URL) -> Void)?
 
     private let table = SidebarTable()
     private var rows: [Row] = []
     private var favoritePaths: [String] = []
     private var currentPath: String?
+    private var springTimer: Timer?
+    private var springTarget: URL?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -34,6 +39,12 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.doubleAction = nil
         table.target = self
         table.action = #selector(openClickedRow(_:))
+        table.onDraggingUpdated = { [weak self] point, urls in
+            self?.updateSpringLoad(at: point, urls: urls)
+        }
+        table.onDraggingExited = { [weak self] in
+            self?.cancelSpringLoad()
+        }
 
         let scroll = NSScrollView(frame: bounds)
         scroll.autoresizingMask = [.width, .height]
@@ -150,6 +161,7 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
         row: Int,
         dropOperation: NSTableView.DropOperation
     ) -> Bool {
+        cancelSpringLoad()
         let urls = DragFiles.urls(from: info.draggingPasteboard)
         if let destination = folderDestination(row: row, operation: dropOperation),
            DropTarget.canDrop(urls, into: destination) {
@@ -204,6 +216,48 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
         guard operation == .on, row >= 0, row < rows.count,
               case .item(_, let url, _, let missing) = rows[row], !missing else { return nil }
         return DropTarget.folder(resolving: url)
+    }
+
+    /// Finder is about half a second. Same delay as the file list.
+    private static let springDelay: TimeInterval = 0.55
+
+    private func updateSpringLoad(at point: NSPoint, urls: [URL]) {
+        guard let folder = springFolder(at: point), DropTarget.canDrop(urls, into: folder) else {
+            cancelSpringLoad()
+            return
+        }
+        scheduleSpringLoad(for: folder)
+    }
+
+    private func springFolder(at point: NSPoint) -> URL? {
+        let row = table.row(at: point)
+        guard row >= 0, row < rows.count,
+              case .item(_, let url, _, let missing) = rows[row], !missing,
+              let folder = DropTarget.folder(resolving: url) else { return nil }
+        // The folder already open: reloading it under the drag does nothing useful.
+        if folder.standardizedFileURL.path == currentPath { return nil }
+        return folder
+    }
+
+    /// Moving to another row restarts the wait. Staying put does not.
+    private func scheduleSpringLoad(for folder: URL) {
+        guard springTarget != folder else { return }
+        cancelSpringLoad()
+        springTarget = folder
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.springDelay, repeats: false) { [weak self] _ in
+            guard let self, self.springTarget == folder else { return }
+            self.springTimer = nil
+            self.springTarget = nil
+            self.onSpringOpen?(folder)
+        }
+        timer.tolerance = 0.1
+        springTimer = timer
+    }
+
+    private func cancelSpringLoad() {
+        springTimer?.invalidate()
+        springTimer = nil
+        springTarget = nil
     }
 
     private func reloadPlaces() {
@@ -317,6 +371,9 @@ private enum Row {
 private final class SidebarTable: NSTableView {
     var onRemoveFavorite: ((Int) -> Void)?
     var isFavoriteRow: ((Int) -> Bool)?
+    /// Table-space pointer and the dragged files, on every drag step.
+    var onDraggingUpdated: ((NSPoint, [URL]) -> Void)?
+    var onDraggingExited: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -346,6 +403,18 @@ private final class SidebarTable: NSTableView {
         frame.size.width = contentSize.width
         frame.size.height = max(frame.size.height, contentSize.height)
         self.frame = frame
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let operation = super.draggingUpdated(sender)
+        let point = convert(sender.draggingLocation, from: nil)
+        onDraggingUpdated?(point, DragFiles.urls(from: sender.draggingPasteboard))
+        return operation
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onDraggingExited?()
+        super.draggingExited(sender)
     }
 
     override func rightMouseDown(with event: NSEvent) {

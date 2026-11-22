@@ -44,8 +44,11 @@ Work in progress. Built and used daily by one person, so it covers the operation
 - Quick Look with Space, then Up and Down step through the folder with the preview following. Get Info with `Cmd+I` for one item's details or a multi-selection summary — including the recursive size of folders, the created date, and the owner and group. A summary does not claim one date or one owner; it shows a dash.
 - Permissions are editable in the Info window by clicking the mode bits. The owner and group are read-only: changing them can need root.
 - Open With, including *Other…*, from the context menu.
+- Duplicate with `Cmd+D`.
+- Make Alias, in the File menu and the context menu, writes a Finder-style alias next to the item: it keeps following the original when you rename or move it, unlike a symlink.
 - Copy Path with `Option+Cmd+C` puts one path per line on the clipboard, ready for a shell. Nothing selected copies the open folder. Show in Finder and Open in Terminal are in the context menu, for when you want to leave.
 - Filter the current folder by name with `Cmd+F`. It narrows what is listed; it never searches the disk.
+- Hold a dragged file over a sidebar row for a moment and the window opens that folder, so a deep destination is two gestures away without a sidebar tree.
 - Drag a selection into Terminal, iTerm, or Warp and get a shell-escaped path: single quotes, embedded quotes handled, one argument per file.
 
 ## Shortcuts
@@ -102,6 +105,20 @@ Set `ROACH_START_PATH` to start in a particular folder instead of the last one u
 ```sh
 ROACH_START_PATH=~/Projects .build/release/RoachExplorer
 ```
+
+Set `ROACH_CONFIG_DIR` to keep settings somewhere else — useful for a test run that
+should not write over your real favourites:
+
+```sh
+ROACH_CONFIG_DIR=/tmp/roach-test swift run RoachExplorer
+```
+
+The pure logic has tests:
+
+```sh
+swift test
+```
+
 
 ## How it is put together
 

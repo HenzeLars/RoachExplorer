@@ -81,6 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(WindowController.duplicateSelection(_:)),
             keyEquivalent: "d"
         )
+        fileMenu.addItem(
+            withTitle: "Make Alias",
+            action: #selector(WindowController.makeAlias(_:)),
+            keyEquivalent: ""
+        )
 
         // Edit menu. Standard text actions, routed through the responder chain.
         // Undo and Redo cover the app's paste and move, not text typing.

@@ -11,5 +11,10 @@ let package = Package(
             name: "RoachExplorer",
             path: "Sources/RoachExplorer"
         ),
+        .testTarget(
+            name: "RoachExplorerTests",
+            dependencies: ["RoachExplorer"],
+            path: "Tests/RoachExplorerTests"
+        ),
     ]
 )

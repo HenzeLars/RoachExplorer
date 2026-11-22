@@ -29,8 +29,13 @@ struct WindowFrame: Codable {
 
 /// Settings live in `~/.config/roach-explorer/`, confirmed — not Application Support.
 enum SettingsStore {
+    /// `ROACH_CONFIG_DIR` moves the whole settings folder, so a test run
+    /// never writes over the real favourites. Same idea as `ROACH_START_PATH`.
     static var directory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let override = ProcessInfo.processInfo.environment["ROACH_CONFIG_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config", isDirectory: true)
             .appendingPathComponent("roach-explorer", isDirectory: true)
     }

@@ -29,8 +29,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A hand-written changelog for this tag wins; otherwise GitHub's notes.
+          NOTES=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            NOTE_ARGS="--notes-file $NOTES"
+          else
+            NOTE_ARGS="--generate-notes"
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "dist/RoachExplorer-${GITHUB_REF_NAME}.zip" \
             "dist/RoachExplorer-${GITHUB_REF_NAME}.zip.sha256" \
             --title "Roach Explorer ${GITHUB_REF_NAME}" \
-            --generate-notes
+            $NOTE_ARGS

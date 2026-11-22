@@ -18,4 +18,5 @@ jobs:
       - name: Build
         run: swift build -c release
 
-      # No test target yet. When one exists, `swift test` belongs here.
+      - name: Test
+        run: swift test
