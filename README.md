@@ -98,7 +98,7 @@ Or build it as a real app bundle and install it in `/Applications`:
 scripts/make-app.sh
 ```
 
-The bundle script builds the release binary, generates `AppIcon.icns` from `roach-explorer.jpeg` with `sips` and `iconutil`, copies `Resources/Info.plist`, and ad-hoc signs the result. The app is not sandboxed, so it can open anything you can; opening it from Finder is why the ad-hoc signature is there. `APP_DIR` and `VERSION` override where the bundle lands and the version stamped into it — the release workflow sets both.
+The bundle script builds the release binary, generates `AppIcon.icns` from `roach-explorer.jpeg` with `sips` and `iconutil`, copies `Resources/Info.plist`, and ad-hoc signs the result. The app is not sandboxed, so it can open anything you can; opening it from Finder is why the ad-hoc signature is there. `APP_DIR` overrides where the bundle lands and `VERSION` the version stamped into it — the release workflow sets both. Without `VERSION`, a local build takes the newest git tag, so About shows the same version the repository is at.
 
 Set `ROACH_START_PATH` to start in a particular folder instead of the last one used:
 
@@ -122,7 +122,7 @@ swift test
 
 ## How it is put together
 
-Swift Package Manager, one executable target, no dependencies outside the system frameworks. AppKit throughout: `NSTableView` for the list, `NSMenu` for the menus, `NSWorkspace` for launching, `NSPasteboard` for drag and drop.
+Swift Package Manager, one executable target and one test target, no dependencies outside the system frameworks. AppKit throughout: `NSTableView` for the list, `NSMenu` for the menus, `NSWorkspace` for launching, `NSPasteboard` for drag and drop.
 
 ```
 Sources/RoachExplorer/
@@ -134,6 +134,7 @@ Sources/RoachExplorer/
     FileTransfer.swift    copy and move, collisions, progress, cancellation
     FileClipboard.swift   the cut and copy state on the pasteboard
     Drag.swift            drag operations, drop targets, shell quoting
+    Alias.swift           Finder-style alias files, not symlinks
     Summary.swift         recursive size walks
     Permissions.swift     mode bits, without following symlinks
     CockroachName.swift   generated folder names
@@ -147,6 +148,8 @@ Sources/RoachExplorer/
     InfoWindow.swift      details summary and permissions
     TransferProgress.swift the progress panel
     StatusBar.swift       counts and size at the bottom
+Tests/RoachExplorerTests/
+  RoachExplorerTests.swift  quoting, sizes, drop rules, cockroach names, aliases
 ```
 
 Two design decisions worth knowing about:
@@ -157,10 +160,10 @@ Two design decisions worth knowing about:
 
 ## Not here
 
-No tabs, no icon view, no column view, no search across the disk, no aliases, no network browsing beyond what the sidebar exposes. Some of those are planned; the ones that are not are deliberate.
+No tabs, no icon view, no column view, no search across the disk, no network browsing beyond what the sidebar exposes. Some of those are planned; the ones that are not are deliberate.
 
 ## Status and licence
 
-Personal project, actively changing. There is no test suite yet, and the commit history is the development log.
+Personal project, actively changing. The pure logic has unit tests — path quoting, size formatting, the drop rules, generated names and aliases — and they run in CI on every push. Anything that needs a window is checked by hand. The commit history is the development log.
 
 MIT licensed — see [LICENSE](LICENSE). Copy it, fork it, change it, ship it. Attribution is the only thing the licence asks for.
