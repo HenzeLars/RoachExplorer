@@ -2,6 +2,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowControllers: [WindowController] = []
+    private var helpWindow: HelpWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
@@ -46,6 +47,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             options[.applicationVersion] = version
         }
         NSApp.orderFrontStandardAboutPanel(options: options)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Keyboard shortcuts reference panel.
+    @objc func showHelp(_ sender: Any?) {
+        if helpWindow == nil {
+            helpWindow = HelpWindow()
+        }
+        helpWindow?.showWindow(nil)
+        helpWindow?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -194,7 +205,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(helpItem)
         let helpMenu = NSMenu(title: "Help")
         helpItem.submenu = helpMenu
-        NSApp.helpMenu = helpMenu
+        helpMenu.addItem(
+            withTitle: "Keyboard Shortcuts",
+            action: #selector(showHelp(_:)),
+            keyEquivalent: ""
+        )
+        helpMenu.addItem(.separator())
+        helpMenu.addItem(
+            withTitle: "About Roach Explorer",
+            action: #selector(showAbout(_:)),
+            keyEquivalent: ""
+        )
 
         NSApp.mainMenu = mainMenu
     }
