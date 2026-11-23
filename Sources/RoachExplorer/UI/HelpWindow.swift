@@ -24,9 +24,11 @@ final class HelpWindow: NSWindowController {
     ]
 
     init() {
+        let rowHeight: CGFloat = 22
+        let contentHeight = 60 + CGFloat(HelpWindow.shortcuts.count) * rowHeight + 60
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 380),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: contentHeight),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -38,35 +40,35 @@ final class HelpWindow: NSWindowController {
 
         let title = NSTextField(labelWithString: "Keyboard Shortcuts")
         title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
-        title.frame = NSRect(x: 20, y: 340, width: 300, height: 24)
+        title.frame = NSRect(x: 20, y: contentHeight - 40, width: 300, height: 24)
         content.addSubview(title)
 
         let subtitle = NSTextField(labelWithString: "Roach Explorer — key bindings at a glance")
         subtitle.font = NSFont.systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 20, y: 318, width: 380, height: 16)
+        subtitle.frame = NSRect(x: 20, y: contentHeight - 62, width: 400, height: 16)
         content.addSubview(subtitle)
 
-        var y: CGFloat = 280
-        for (key, action) in Self.shortcuts {
+        var y: CGFloat = contentHeight - 90
+        for (key, action) in HelpWindow.shortcuts {
             let keyField = NSTextField(labelWithString: key)
             keyField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
             keyField.textColor = .secondaryLabelColor
-            keyField.frame = NSRect(x: 20, y: y, width: 80, height: 18)
+            keyField.frame = NSRect(x: 20, y: y, width: 90, height: 18)
             content.addSubview(keyField)
 
             let actionField = NSTextField(labelWithString: action)
             actionField.font = NSFont.systemFont(ofSize: 12)
-            actionField.frame = NSRect(x: 110, y: y, width: 290, height: 18)
+            actionField.frame = NSRect(x: 120, y: y, width: 300, height: 18)
             content.addSubview(actionField)
 
-            y -= 22
+            y -= rowHeight
         }
 
         let note = NSTextField(labelWithString: "Also: ⌘Q Quit, ⌘H Hide, ⌥⌘H Hide Others")
         note.font = NSFont.systemFont(ofSize: 10)
         note.textColor = .tertiaryLabelColor
-        note.frame = NSRect(x: 20, y: 16, width: 380, height: 14)
+        note.frame = NSRect(x: 20, y: 16, width: 400, height: 14)
         content.addSubview(note)
     }
 

@@ -200,22 +200,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         NSApp.windowsMenu = windowMenu
 
+        // Suppress the system Spotlight-for-Help search field: assign an unused,
+        // off-screen menu to NSApp.helpMenu so AppKit stops injecting it into
+        // any visible menu bar menu.
+        let unusedHelpMenu = NSMenu(title: "Unused")
+        NSApp.helpMenu = unusedHelpMenu
+
         // Help menu.
         let helpItem = NSMenuItem()
         mainMenu.addItem(helpItem)
-        let helpMenu = NSMenu(title: "Help")
+        let helpMenu = NSMenu(title: "Roach Info")
         helpItem.submenu = helpMenu
         helpMenu.addItem(
             withTitle: "Keyboard Shortcuts",
             action: #selector(showHelp(_:)),
             keyEquivalent: ""
         )
+        helpMenu.items.first?.target = self
         helpMenu.addItem(.separator())
         helpMenu.addItem(
             withTitle: "About Roach Explorer",
             action: #selector(showAbout(_:)),
             keyEquivalent: ""
         )
+        helpMenu.items.last?.target = self
 
         NSApp.mainMenu = mainMenu
     }
