@@ -47,7 +47,7 @@ Work in progress. Built and used daily by one person, so it covers the operation
 - Duplicate with `Cmd+D`.
 - Make Alias, in the File menu and the context menu, writes a Finder-style alias next to the item: it keeps following the original when you rename or move it, unlike a symlink.
 - Copy Path with `Option+Cmd+C` puts one path per line on the clipboard, ready for a shell. Nothing selected copies the open folder. Show in Finder and Open in Terminal are in the context menu, for when you want to leave.
-- Filter the current folder by name with `Cmd+F`. It narrows what is listed; it never searches the disk.
+- Find by name with `Cmd+F` or the magnifying-glass **Find** button. It filters the current folder by default; check **Include subfolders** to search recursively.
 - Hold a dragged file over a sidebar row for a moment and the window opens that folder, so a deep destination is two gestures away without a sidebar tree.
 - Drag a selection into Terminal, iTerm, or Warp and get a shell-escaped path: single quotes, embedded quotes handled, one argument per file.
 
@@ -67,7 +67,7 @@ Work in progress. Built and used daily by one person, so it covers the operation
 | Get Info | `Cmd+I` |
 | Quick Look | `Space`, then `Up` / `Down` |
 | Copy path | `Option+Cmd+C` |
-| Filter | `Cmd+F` |
+| Find by name | `Cmd+F` |
 | Back / Forward | `Cmd+[` / `Cmd+]` |
 | Enclosing folder | `Cmd+Up` |
 | Reload | `Cmd+R` |
@@ -160,7 +160,7 @@ Two design decisions worth knowing about:
 
 ## Not here
 
-No tabs, no icon view, no column view, no search across the disk, no network browsing beyond what the sidebar exposes. Some of those are planned; the ones that are not are deliberate.
+No tabs, no icon view, no column view, no file-content search, no network browsing beyond what the sidebar exposes. Some of those are planned; the ones that are not are deliberate.
 
 ## Status and licence
 

@@ -21,28 +21,61 @@ final class FileTable: NSTableView {
     /// the drag keeps going, the window shows the folder underneath.
     var onSpringOpen: ((URL) -> Void)?
 
+    private var folderItems: [FileItem] = []
+    /// Non-nil while the list shows search results instead of a folder.
+    private var searchResults: [FileItem]?
     private var storedItems: [FileItem] = []
-    private var allItems: [FileItem] = []
     /// A folder row that has been held under a drag, and the wait for it.
     private var springTimer: Timer?
     private var springTarget: URL?
 
+    /// The folder a search started in. Results show their place relative to it.
+    var searchRoot: URL?
+
+    /// True while rows come from a search rather than from the open folder.
+    /// Rename, new file and paste are switched off: they assume one folder.
+    var isShowingSearchResults: Bool { searchResults != nil }
+
     /// The rows of the table, always in the current sort order.
     /// A computed setter: sorting the backing store in place would not
     /// re-enter, but `items.sort` on an observed stored property does.
+    /// Setting it leaves search results behind.
     var items: [FileItem] {
         get { storedItems }
         set {
-            allItems = newValue
+            folderItems = newValue
+            searchResults = nil
             rebuild()
         }
     }
 
-    /// Everything in the open folder, including rows the filter hides.
+    /// The open folder's contents, whatever the list is showing.
     /// New names must not clash with these.
-    var unfilteredItems: [FileItem] { allItems }
+    var unfilteredItems: [FileItem] { folderItems }
+
+    /// Swaps the list to search results. Empty results are valid.
+    func showSearchResults(_ items: [FileItem]) {
+        searchResults = items
+        rebuild()
+    }
+
+    func appendSearchResults(_ items: [FileItem]) {
+        guard var results = searchResults else { return }
+        results.append(contentsOf: items)
+        searchResults = results
+        rebuild()
+    }
+
+    /// Back to the open folder.
+    func clearSearchResults() {
+        guard searchResults != nil else { return }
+        searchResults = nil
+        searchRoot = nil
+        rebuild()
+    }
 
     /// Cmd+F. Case-insensitive substring of the name. Empty means no filter.
+    /// It does not apply to search results: those are already matched.
     var filterText: String = "" {
         didSet {
             if filterText != oldValue { rebuild() }
@@ -56,10 +89,17 @@ final class FileTable: NSTableView {
             selectedRowIndexes.compactMap { $0 < storedItems.count ? storedItems[$0].url : nil }
         )
         let needle = filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        storedItems = needle.isEmpty
-            ? allItems
-            : allItems.filter { $0.name.lowercased().contains(needle) }
+        if let results = searchResults {
+            storedItems = results
+        } else {
+            storedItems = needle.isEmpty
+                ? folderItems
+                : folderItems.filter { $0.name.lowercased().contains(needle) }
+        }
         applySort()
+        // Two lines of text per row while results are showing.
+        let height: CGFloat = searchResults == nil ? 22 : 40
+        if rowHeight != height { rowHeight = height }
         reloadData()
         let rows = IndexSet(storedItems.indices.filter { selectedURLs.contains(storedItems[$0].url) })
         if !rows.isEmpty {
@@ -736,7 +776,8 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
         proposedRow row: Int,
         proposedDropOperation dropOperation: NSTableView.DropOperation
     ) -> NSDragOperation {
-        guard !isEditingName else { return [] }
+        // A result list is a view over many folders, not a folder: no drops into it.
+        guard !isEditingName, !isShowingSearchResults else { return [] }
         let urls = DragFiles.urls(from: info.draggingPasteboard)
         guard let destination = dropDestination(row: row, operation: dropOperation),
               DropTarget.canDrop(urls, into: destination) else { return [] }
@@ -755,6 +796,7 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
         dropOperation: NSTableView.DropOperation
     ) -> Bool {
         cancelSpringLoad()
+        guard !isShowingSearchResults else { return false }
         let urls = DragFiles.urls(from: info.draggingPasteboard)
         guard let destination = dropDestination(row: row, operation: dropOperation),
               DropTarget.canDrop(urls, into: destination) else { return false }
@@ -782,6 +824,7 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
             nameCell.imageView?.image = icon(for: item)
             nameCell.textField?.stringValue = item.name
             nameCell.showLinkMark = item.isLink
+            nameCell.detail = isShowingSearchResults ? location(of: item) : ""
             cell = nameCell
         } else {
             let textCell = TextCellView(font: listFont)
@@ -802,8 +845,18 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
-    private func value(for item: FileItem, column: String) -> String {
-        switch column {
+    /// Where a result lives, relative to the folder the search started in.
+    /// "Coding/Roach-Explorer" reads better than the whole path, and the row's
+    /// own name is already on the first line.
+    private func location(of item: FileItem) -> String {
+        let parent = item.url.deletingLastPathComponent().standardizedFileURL.path
+        guard let root = searchRoot?.standardizedFileURL.path else { return parent }
+        guard parent != root else { return "" }
+        guard parent.hasPrefix(root) else { return parent }
+        return String(parent.dropFirst(root.count).drop(while: { $0 == "/" }))
+    }
+
+    private func value(for item: FileItem, column: String) -> String {        switch column {
         case "Date modified":
             return Format.date(item.modified)
         case "Size":
@@ -838,7 +891,16 @@ private final class NameCellView: NSTableCellView {
         didSet { linkMark.isHidden = !showLinkMark }
     }
 
+    /// Second line, used while showing search results. Empty hides it.
+    var detail: String = "" {
+        didSet {
+            detailLabel.stringValue = detail
+            detailLabel.isHidden = detail.isEmpty
+        }
+    }
+
     private let linkMark = NSImageView()
+    private let detailLabel = NSTextField(labelWithString: "")
 
     init(font: NSFont) {
         super.init(frame: .zero)
@@ -853,9 +915,16 @@ private final class NameCellView: NSTableCellView {
         linkMark.contentTintColor = .secondaryLabelColor
         linkMark.isHidden = true
 
+        detailLabel.font = NSFont.systemFont(ofSize: 10)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingHead
+        detailLabel.cell?.truncatesLastVisibleLine = true
+        detailLabel.isHidden = true
+
         addSubview(iconView)
         addSubview(label)
         addSubview(linkMark)
+        addSubview(detailLabel)
         imageView = iconView
         textField = label
     }
@@ -883,15 +952,16 @@ private final class NameCellView: NSTableCellView {
         iconView.frame = NSRect(x: 4, y: (bounds.height - iconSide) / 2, width: iconSide, height: iconSide)
         let label = textField ?? NSTextField()
         let textX = iconView.frame.maxX + 6
-        let markWidth: CGFloat = showLinkMark ? 16 : 0
-        label.frame = NSRect(
-            x: textX,
-            y: 0,
-            width: max(0, bounds.width - textX - 4 - markWidth),
-            height: bounds.height
-        )
+        let textWidth = max(0, bounds.width - textX - 4 - (showLinkMark ? 16 : 0))
+        if detailLabel.isHidden {
+            label.frame = NSRect(x: textX, y: 0, width: textWidth, height: bounds.height)
+        } else {
+            label.frame = NSRect(x: textX, y: bounds.height - 24, width: textWidth, height: 18)
+            detailLabel.frame = NSRect(x: textX, y: 3, width: textWidth, height: 14)
+        }
         if !linkMark.isHidden {
-            linkMark.frame = NSRect(x: bounds.width - 20, y: (bounds.height - 10) / 2, width: 10, height: 10)
+            let markY = detailLabel.isHidden ? (bounds.height - 10) / 2 : bounds.height - 18
+            linkMark.frame = NSRect(x: bounds.width - 20, y: markY, width: 10, height: 10)
         }
     }
 }

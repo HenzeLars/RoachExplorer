@@ -3,7 +3,7 @@ import AppKit
 /// The two path rows: a monospace text field, and one button per segment.
 /// The segment row scrolls. It never hides a segment.
 final class PathBar: NSView, NSTextFieldDelegate {
-    static let preferredHeight: CGFloat = 56
+    static let preferredHeight: CGFloat = 60
 
     /// Go to this folder. The window updates the bar afterwards.
     var onNavigate: ((URL) -> Void)?
@@ -12,13 +12,17 @@ final class PathBar: NSView, NSTextFieldDelegate {
     var onBack: (() -> Void)?
     var onForward: (() -> Void)?
     var onReload: (() -> Void)?
+    var onFind: (() -> Void)?
+    var onUndo: (() -> Void)?
+    var onRedo: (() -> Void)?
     /// File URLs dropped on a path segment. `copying` is Option.
     var onDrop: ((_ urls: [URL], _ destination: URL, _ copying: Bool) -> Void)?
     private var dropHighlight: NSButton?
 
-    private let backButton = NSButton()
-    private let forwardButton = NSButton()
+    private let navigationButtons = NSSegmentedControl()
     private let reloadButton = NSButton()
+    private let searchButton = NSButton()
+    private let historyButtons = NSSegmentedControl()
     private let field = NSTextField(frame: .zero)
     private let segmentScroll = NSScrollView(frame: .zero)
     private let segmentDocument = NSView(frame: .zero)
@@ -51,11 +55,16 @@ final class PathBar: NSView, NSTextFieldDelegate {
             cell.lineBreakMode = .byTruncatingHead
         }
         addSubview(field)
-        configure(backButton, symbol: "chevron.backward", label: "Back", action: #selector(backClicked(_:)))
-        configure(forwardButton, symbol: "chevron.forward", label: "Forward", action: #selector(forwardClicked(_:)))
+        configurePair(navigationButtons, items: [("chevron.backward", "Back"), ("chevron.forward", "Forward")],
+                      action: #selector(navigationClicked(_:)))
         configure(reloadButton, symbol: "arrow.clockwise", label: "Reload", action: #selector(reloadClicked(_:)))
-        backButton.isEnabled = false
-        forwardButton.isEnabled = false
+        configurePair(historyButtons, items: [("arrow.uturn.backward", "Undo"), ("arrow.uturn.forward", "Redo")],
+                      action: #selector(historyClicked(_:)))
+        configure(searchButton, symbol: "magnifyingglass", label: "Find", action: #selector(findClicked(_:)))
+        searchButton.imagePosition = .imageLeading
+        searchButton.toolTip = "Find by name (⌘F)"
+        setNavigation(canGoBack: false, canGoForward: false)
+        setUndo(canUndo: false, canRedo: false, undoTitle: "Undo", redoTitle: "Redo")
 
         segmentScroll.drawsBackground = false
         segmentScroll.borderType = .noBorder
@@ -95,8 +104,31 @@ final class PathBar: NSView, NSTextFieldDelegate {
     }
 
     func setNavigation(canGoBack: Bool, canGoForward: Bool) {
-        backButton.isEnabled = canGoBack
-        forwardButton.isEnabled = canGoForward
+        navigationButtons.setEnabled(canGoBack, forSegment: 0)
+        navigationButtons.setEnabled(canGoForward, forSegment: 1)
+    }
+
+    /// The buttons carry the action name, like the Edit menu does,
+    /// so "Undo Paste" is visible without opening a menu.
+    func setUndo(canUndo: Bool, canRedo: Bool, undoTitle: String, redoTitle: String) {
+        historyButtons.setEnabled(canUndo, forSegment: 0)
+        historyButtons.setEnabled(canRedo, forSegment: 1)
+        historyButtons.setToolTip(canUndo ? undoTitle : "Undo", forSegment: 0)
+        historyButtons.setToolTip(canRedo ? redoTitle : "Redo", forSegment: 1)
+    }
+
+
+
+    @objc private func findClicked(_ sender: Any?) { onFind?() }
+
+    @objc private func navigationClicked(_ sender: NSSegmentedControl) {
+        if sender.selectedSegment == 0 { onBack?() }
+        if sender.selectedSegment == 1 { onForward?() }
+    }
+
+    @objc private func historyClicked(_ sender: NSSegmentedControl) {
+        if sender.selectedSegment == 0 { onUndo?() }
+        if sender.selectedSegment == 1 { onRedo?() }
     }
 
     /// Cmd+L. Selects the whole path, so typing replaces it.
@@ -125,26 +157,53 @@ final class PathBar: NSView, NSTextFieldDelegate {
 
     override func layout() {
         super.layout()
-        let navWidth: CGFloat = 26
-        let navY = bounds.height - 30
-        backButton.frame = NSRect(x: 8, y: navY, width: navWidth, height: 22)
-        forwardButton.frame = NSRect(x: 8 + navWidth, y: navY, width: navWidth, height: 22)
-        reloadButton.frame = NSRect(x: 8 + navWidth * 2, y: navY, width: navWidth, height: 22)
-        let fieldX = 8 + navWidth * 3 + 6
-        field.frame = NSRect(x: fieldX, y: navY, width: max(0, bounds.width - fieldX - 8), height: 22)
-        // Segments line up with the text, not with the buttons.
-        segmentScroll.frame = NSRect(x: fieldX - 8, y: 2, width: max(0, bounds.width - (fieldX - 8)), height: 24)
+        let buttonWidth: CGFloat = 36
+        let pairWidth = buttonWidth * 2
+        let buttonHeight: CGFloat = 26
+        let groupGap: CGFloat = 8
+        let navY = bounds.height - 32
+        navigationButtons.frame = NSRect(x: 8, y: navY, width: pairWidth, height: buttonHeight)
+        reloadButton.frame = NSRect(x: navigationButtons.frame.midX, y: 2, width: buttonWidth, height: 24)
+        // Give Undo/Redo and Find the same left and right edges.
+        let actionsX = bounds.width - pairWidth - 8
+        historyButtons.frame = NSRect(x: actionsX, y: navY, width: pairWidth, height: buttonHeight)
+        searchButton.frame = NSRect(x: actionsX, y: 2, width: pairWidth, height: 24)
+        let fieldX = navigationButtons.frame.maxX + groupGap
+        let fieldEnd = actionsX - groupGap
+        field.frame = NSRect(x: fieldX, y: navY + 2, width: max(0, fieldEnd - fieldX), height: 22)
+        // Breadcrumbs line up with the address text and stop before Find.
+        let segmentsX = fieldX - 8
+        segmentScroll.frame = NSRect(x: segmentsX, y: 2, width: max(0, fieldEnd - segmentsX), height: 24)
         scrollSegmentsToEnd()
         positionCompletion()
     }
 
+    private func configurePair(_ control: NSSegmentedControl, items: [(String, String)], action: Selector) {
+        control.segmentStyle = .rounded
+        control.trackingMode = .momentary
+        control.segmentCount = items.count
+        control.target = self
+        control.action = action
+        let style = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        for (index, item) in items.enumerated() {
+            let image = NSImage(systemSymbolName: item.0, accessibilityDescription: item.1)
+            control.setImage(image?.withSymbolConfiguration(style), forSegment: index)
+            control.setToolTip(item.1, forSegment: index)
+            control.setWidth(36, forSegment: index)
+        }
+        addSubview(control)
+    }
+
     private func configure(_ button: NSButton, symbol: String, label: String, action: Selector) {
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        let symbolStyle = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(symbolStyle)
         button.title = label
+        button.font = .systemFont(ofSize: 12, weight: .semibold)
         button.imagePosition = .imageOnly
-        button.bezelStyle = .recessed
+        button.bezelStyle = .rounded
         button.setButtonType(.momentaryPushIn)
-        button.controlSize = .small
+        button.controlSize = .regular
         button.toolTip = label
         button.setAccessibilityLabel(label)
         button.target = self
@@ -152,8 +211,6 @@ final class PathBar: NSView, NSTextFieldDelegate {
         addSubview(button)
     }
 
-    @objc private func backClicked(_ sender: Any?) { onBack?() }
-    @objc private func forwardClicked(_ sender: Any?) { onForward?() }
     @objc private func reloadClicked(_ sender: Any?) { onReload?() }
 
     override func viewWillStartLiveResize() {

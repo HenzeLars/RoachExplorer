@@ -160,6 +160,81 @@ final class AliasTests: XCTestCase {
     }
 }
 
+final class SearchTests: XCTestCase {
+    func testMatchesIsACaseInsensitiveSubstring() {
+        XCTAssertTrue(Search.matches(name: "notes.md", query: "NOTES"))
+        XCTAssertTrue(Search.matches(name: "DeepNotes.md", query: "notes"))
+        XCTAssertTrue(Search.matches(name: "notes.md", query: ".md"))
+        XCTAssertFalse(Search.matches(name: "notes.md", query: "todo"))
+    }
+
+    func testMatchesIgnoresAccents() {
+        XCTAssertTrue(Search.matches(name: "über.txt", query: "uber"))
+        XCTAssertTrue(Search.matches(name: "Über.txt", query: "UBER"))
+    }
+
+    func testAnEmptyQueryMatchesNothing() {
+        XCTAssertFalse(Search.matches(name: "notes.md", query: ""))
+        XCTAssertFalse(Search.matches(name: "notes.md", query: "   "))
+    }
+
+    func testTheWalkFindsNestedNames() {
+        let base = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let nested = base.appendingPathComponent("deep/a/b", isDirectory: true)
+        try? FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let photos = base.appendingPathComponent("photos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
+        for file in [
+            base.appendingPathComponent("notes.md"),
+            photos.appendingPathComponent("notes.txt"),
+            nested.appendingPathComponent("deepnotes.md"),
+            base.appendingPathComponent("other.txt"),
+        ] {
+            try? Data("x".utf8).write(to: file)
+        }
+
+        var found: [String] = []
+        let done = expectation(description: "walk finished")
+        _ = Search.start(below: base, query: "notes") { batch in
+            found.append(contentsOf: batch.map(\.name))
+        } onFinish: { outcome in
+            XCTAssertFalse(outcome.cancelled)
+            XCTAssertFalse(outcome.hitLimit)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+
+        XCTAssertEqual(Set(found), ["notes.md", "notes.txt", "deepnotes.md"])
+    }
+
+    func testTheWalkKeepsHiddenFolders() {
+        let base = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let hidden = base.appendingPathComponent(".secrets", isDirectory: true)
+        try? FileManager.default.createDirectory(at: hidden, withIntermediateDirectories: true)
+        try? Data("x".utf8).write(to: hidden.appendingPathComponent("notes.md"))
+
+        var found: [String] = []
+        let done = expectation(description: "walk finished")
+        _ = Search.start(below: base, query: "notes") { batch in
+            found.append(contentsOf: batch.map(\.name))
+        } onFinish: { _ in
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+
+        XCTAssertEqual(found, ["notes.md"])
+    }
+
+    private func temporaryFolder() -> URL {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("roach-search-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+}
+
 final class CockroachNameTests: XCTestCase {    func testOffersANameFromTheList() {
         XCTAssertTrue(CockroachName.all.contains(CockroachName.next(avoiding: [])))
     }

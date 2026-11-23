@@ -15,38 +15,43 @@ struct FileItem {
 }
 
 enum FileSystem {
+    /// The resource keys the list and the search both need.
+    static let itemKeys: Set<URLResourceKey> = [
+        .isDirectoryKey,
+        .isPackageKey,
+        .isSymbolicLinkKey,
+        .fileSizeKey,
+        .contentModificationDateKey,
+        .typeIdentifierKey,
+    ]
+
+    /// One row, from a URL. Returns nil only for a path that cannot be read.
+    static func item(at url: URL) -> FileItem? {
+        let values = (try? url.resourceValues(forKeys: itemKeys)) ?? URLResourceValues()
+        let isFolder = values.isDirectory ?? false
+        return FileItem(
+            url: url,
+            name: url.lastPathComponent,
+            isFolder: isFolder,
+            isPackage: (values.isPackage ?? false) && isFolder,
+            isLink: values.isSymbolicLink ?? false,
+            isHidden: url.lastPathComponent.hasPrefix("."),
+            size: Int64(values.fileSize ?? 0),
+            modified: values.contentModificationDate ?? Date(),
+            kind: kind(for: url, isFolder: isFolder, typeIdentifier: values.typeIdentifier)
+        )
+    }
+
     /// All entries of `directory`, dotfiles included. Folders first,
     /// then case-insensitive name order.
     static func listItems(in directory: URL) -> [FileItem] {
-        let keys: Set<URLResourceKey> = [
-            .isDirectoryKey,
-            .isPackageKey,
-            .isSymbolicLinkKey,
-            .fileSizeKey,
-            .contentModificationDateKey,
-            .typeIdentifierKey,
-        ]
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: directory,
-            includingPropertiesForKeys: Array(keys),
+            includingPropertiesForKeys: Array(itemKeys),
             options: []
         )) ?? []
 
-        let items = urls.compactMap { url -> FileItem? in
-            let values = (try? url.resourceValues(forKeys: keys)) ?? URLResourceValues()
-            let isFolder = values.isDirectory ?? false
-            return FileItem(
-                url: url,
-                name: url.lastPathComponent,
-                isFolder: isFolder,
-                isPackage: (values.isPackage ?? false) && isFolder,
-                isLink: values.isSymbolicLink ?? false,
-                isHidden: url.lastPathComponent.hasPrefix("."),
-                size: Int64(values.fileSize ?? 0),
-                modified: values.contentModificationDate ?? Date(),
-                kind: kind(for: url, isFolder: isFolder, typeIdentifier: values.typeIdentifier)
-            )
-        }
+        let items = urls.compactMap { item(at: $0) }
 
         return items.sorted { a, b in
             if a.isFolder != b.isFolder { return a.isFolder }

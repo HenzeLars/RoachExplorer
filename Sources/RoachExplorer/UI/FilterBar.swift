@@ -1,12 +1,12 @@
 import AppKit
 
-/// The Cmd+F row under the path bar. Hidden until asked for. It narrows
-/// the open folder by name; it never searches the disk.
+/// Find by name, with an optional recursive scope.
 final class FilterBar: NSView {
     static let preferredHeight: CGFloat = 30
 
     let field = NSSearchField()
-
+    var onScopeChange: ((Bool) -> Void)?
+    private let subfolders = NSButton(checkboxWithTitle: "Include subfolders", target: nil, action: nil)
     var onChange: ((String) -> Void)?
     /// Escape, or a click on the field's cancel button.
     var onCancel: (() -> Void)?
@@ -17,7 +17,7 @@ final class FilterBar: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        field.placeholderString = "Filter by name"
+        field.placeholderString = "Find by name"
         field.font = NSFont.systemFont(ofSize: 12)
         field.sendsWholeSearchString = false
         field.sendsSearchStringImmediately = true
@@ -25,6 +25,10 @@ final class FilterBar: NSView {
         field.action = #selector(changed(_:))
         field.delegate = self
         addSubview(field)
+        subfolders.target = self
+        subfolders.action = #selector(scopeChanged(_:))
+        addSubview(subfolders)
+
     }
 
     @available(*, unavailable)
@@ -34,11 +38,22 @@ final class FilterBar: NSView {
 
     override func layout() {
         super.layout()
-        field.frame = NSRect(x: 8, y: 4, width: max(0, bounds.width - 16), height: 22)
+        let scopeWidth = subfolders.intrinsicContentSize.width
+        let scopeX = bounds.width - scopeWidth - 8
+        field.frame = NSRect(x: 8, y: 4, width: max(0, scopeX - 24), height: 22)
+        subfolders.frame = NSRect(x: scopeX, y: 4, width: scopeWidth, height: 22)
     }
 
     @objc private func changed(_ sender: Any?) {
         onChange?(field.stringValue)
+    }
+
+    @objc private func scopeChanged(_ sender: Any?) {
+        onScopeChange?(subfolders.state == .on)
+    }
+
+    func resetScope() {
+        subfolders.state = .off
     }
 
     func focus() {
@@ -54,6 +69,12 @@ final class FilterBar: NSView {
 }
 
 extension FilterBar: NSSearchFieldDelegate {
+    /// Live while typing. The field's action only fires when editing ends, which
+    /// would make the search wait for a click somewhere else.
+    func controlTextDidChange(_ obj: Notification) {
+        onChange?(field.stringValue)
+    }
+
     func control(
         _ control: NSControl,
         textView: NSTextView,
