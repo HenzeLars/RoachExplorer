@@ -20,8 +20,8 @@ final class PathBar: NSView, NSTextFieldDelegate {
     private var dropHighlight: NSButton?
 
     private let navigationButtons = NSSegmentedControl()
-    private let reloadButton = NSButton()
-    private let searchButton = NSButton()
+    private let reloadButton = NSSegmentedControl()
+    private let searchButton = NSSegmentedControl()
     private let historyButtons = NSSegmentedControl()
     private let field = NSTextField(frame: .zero)
     private let segmentScroll = NSScrollView(frame: .zero)
@@ -57,12 +57,15 @@ final class PathBar: NSView, NSTextFieldDelegate {
         addSubview(field)
         configurePair(navigationButtons, items: [("chevron.backward", "Back"), ("chevron.forward", "Forward")],
                       action: #selector(navigationClicked(_:)))
-        configure(reloadButton, symbol: "arrow.clockwise", label: "Reload", action: #selector(reloadClicked(_:)))
+        configurePair(reloadButton, items: [("arrow.clockwise", "Reload")], action: #selector(reloadClicked(_:)))
+        reloadButton.setWidth(36, forSegment: 0)
+        reloadButton.setToolTip("Reload", forSegment: 0)
         configurePair(historyButtons, items: [("arrow.uturn.backward", "Undo"), ("arrow.uturn.forward", "Redo")],
                       action: #selector(historyClicked(_:)))
-        configure(searchButton, symbol: "magnifyingglass", label: "Find", action: #selector(findClicked(_:)))
-        searchButton.imagePosition = .imageLeading
-        searchButton.toolTip = "Find by name (⌘F)"
+        configurePair(searchButton, items: [("magnifyingglass", "Find")], action: #selector(findClicked(_:)))
+        searchButton.setWidth(72, forSegment: 0)
+        searchButton.setLabel("Find", forSegment: 0)
+        searchButton.setToolTip("Find by name (⌘F)", forSegment: 0)
         setNavigation(canGoBack: false, canGoForward: false)
         setUndo(canUndo: false, canRedo: false, undoTitle: "Undo", redoTitle: "Redo")
 
@@ -163,11 +166,14 @@ final class PathBar: NSView, NSTextFieldDelegate {
         let groupGap: CGFloat = 8
         let navY = bounds.height - 32
         navigationButtons.frame = NSRect(x: 8, y: navY, width: pairWidth, height: buttonHeight)
-        reloadButton.frame = NSRect(x: navigationButtons.frame.midX, y: 2, width: buttonWidth, height: 24)
-        // Give Undo/Redo and Find the same left and right edges.
+        // Reload: right-aligned with nav buttons' right edge, row 2.
+        let navRightEdge = navigationButtons.frame.maxX
+        reloadButton.frame = NSRect(x: navRightEdge - buttonWidth, y: 2, width: buttonWidth, height: 24)
+        // Undo/Redo sits at the right edge of row 1.
         let actionsX = bounds.width - pairWidth - 8
         historyButtons.frame = NSRect(x: actionsX, y: navY, width: pairWidth, height: buttonHeight)
-        searchButton.frame = NSRect(x: actionsX, y: 2, width: pairWidth, height: 24)
+        // Find: same width as Undo/Redo, right side aligned with Undo/Redo's right edge.
+        searchButton.frame = NSRect(x: bounds.width - pairWidth - 8, y: 2, width: pairWidth, height: 24)
         let fieldX = navigationButtons.frame.maxX + groupGap
         let fieldEnd = actionsX - groupGap
         field.frame = NSRect(x: fieldX, y: navY + 2, width: max(0, fieldEnd - fieldX), height: 22)

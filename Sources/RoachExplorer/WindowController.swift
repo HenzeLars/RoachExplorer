@@ -130,6 +130,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         pathBar.onBack = { [weak self] in self?.goBack(nil) }
         pathBar.onForward = { [weak self] in self?.goForward(nil) }
         pathBar.onReload = { [weak self] in self?.reload(nil) }
+        pathBar.onFind = { [weak self] in self?.focusFilter(nil) }
+        pathBar.onUndo = { [weak self] in self?.undoLastAction(nil) }
+        pathBar.onRedo = { [weak self] in self?.redoLastAction(nil) }
         pathBar.onFinishEditing = { [weak self] in
             guard let self else { return }
             self.window?.makeFirstResponder(self.fileTable)
@@ -720,6 +723,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             controller.undoTransfer(records)
         }
         fileUndoManager.setActionName(records.contains { $0.kind == .move } ? "Move" : "Paste")
+        updateUndoButtonState()
     }
 
     private func undoTransfer(_ records: [TransferRecord]) {
@@ -744,6 +748,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         if !failures.isEmpty {
             present(message: failures.joined(separator: "\n"), title: "Could not undo")
         }
+        updateUndoButtonState()
     }
 
     private func redoTransfer(_ records: [TransferRecord]) {
@@ -768,6 +773,17 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         if !failures.isEmpty {
             present(message: failures.joined(separator: "\n"), title: "Could not redo")
         }
+        updateUndoButtonState()
+    }
+
+    /// Keep the Undo/Redo path bar buttons in sync with the undo manager.
+    private func updateUndoButtonState() {
+        pathBar.setUndo(
+            canUndo: !isEditingText && fileUndoManager.canUndo,
+            canRedo: !isEditingText && fileUndoManager.canRedo,
+            undoTitle: fileUndoManager.undoMenuItemTitle,
+            redoTitle: fileUndoManager.redoMenuItemTitle
+        )
     }
 
     /// Paste, a drop, or a duplicate. Same collision question, same
