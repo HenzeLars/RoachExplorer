@@ -15,6 +15,9 @@ final class FilterBar: NSView {
         window?.firstResponder === field.currentEditor()
     }
 
+    /// The checkbox state. True means a walk below the open folder, not a filter.
+    var includesSubfolders: Bool { subfolders.state == .on }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         field.placeholderString = "Find by name"

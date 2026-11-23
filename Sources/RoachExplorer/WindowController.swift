@@ -64,6 +64,10 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var infoWindow: InfoWindow?
     /// A second window, for "open all" of several folders. The app delegate sets this.
     var onOpenWindow: ((URL) -> Void)?
+    /// The running recursive search, if "Include subfolders" is on.
+    private var searchTask: SearchTask?
+    private var searchDebounce: DispatchWorkItem?
+    private var searchGeneration = 0
 
     init(startingURL: URL?) {
         let settings = SettingsStore.load()
@@ -117,7 +121,22 @@ final class WindowController: NSWindowController, NSWindowDelegate {
 
         filterBar.onChange = { [weak self] text in
             guard let self else { return }
-            self.fileTable.filterText = text
+            if self.filterBar.includesSubfolders {
+                self.scheduleRecursiveSearch(text)
+            } else {
+                self.cancelRecursiveSearch()
+                self.fileTable.filterText = text
+            }
+            self.updateStatusBar()
+        }
+        filterBar.onScopeChange = { [weak self] include in
+            guard let self else { return }
+            if include {
+                self.scheduleRecursiveSearch(self.filterBar.field.stringValue)
+            } else {
+                self.cancelRecursiveSearch()
+                self.fileTable.filterText = self.filterBar.field.stringValue
+            }
             self.updateStatusBar()
         }
         filterBar.onCancel = { [weak self] in
@@ -269,6 +288,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     /// `remember` is false for back, forward, reload-into-a-missing-folder, and the
     /// first show. A vanished folder is replaced by the nearest parent that exists.
     func show(folder url: URL, remember: Bool = true) {
+        cancelRecursiveSearch()
         let destination = nearestExistingAncestor(of: url)
         if filterVisible { setFilterVisible(false) }
         if remember, let current = currentURL, current != destination {
@@ -312,6 +332,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     /// Cmd+R, and the folder watcher. Selection survives: the table reselects by URL.
     @objc func reload(_ sender: Any?) {
         guard let currentURL else { return }
+        // A recursive search owns the rows. Re-run it instead of replacing it
+        // with the open folder.
+        if fileTable.isShowingSearchResults, filterBar.includesSubfolders {
+            scheduleRecursiveSearch(filterBar.field.stringValue)
+            return
+        }
         if !isExistingDirectory(currentURL) {
             show(folder: currentURL, remember: false)
             return
@@ -333,6 +359,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
         filterVisible = visible
         filterBar.field.stringValue = ""
+        cancelRecursiveSearch()
+        filterBar.resetScope()
         fileTable.filterText = ""
         layoutContent()
         if visible {
@@ -341,6 +369,60 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             window?.makeFirstResponder(fileTable)
         }
         updateStatusBar()
+    }
+
+    /// ---------------------------------------------------------------------------
+    /// Recursive search (below the open folder). Typing waits 0.25 s so that one
+    /// word equals one walk, not a walk per keystroke.
+    /// ---------------------------------------------------------------------------
+    private func scheduleRecursiveSearch(_ query: String) {
+        searchDebounce?.cancel()
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let root = currentURL else {
+            cancelRecursiveSearch()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.startRecursiveSearch(query: trimmed, root: root)
+        }
+        searchDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    private func startRecursiveSearch(query: String, root: URL) {
+        searchDebounce = nil
+        searchTask?.cancel()
+        searchGeneration += 1
+        let generation = searchGeneration
+        fileTable.searchRoot = root
+        fileTable.filterText = ""
+        fileTable.showSearchResults([])
+        let task = Search.start(
+            below: root,
+            query: query,
+            onBatch: { [weak self] items in
+                guard let self, self.searchGeneration == generation else { return }
+                self.fileTable.appendSearchResults(items)
+                self.updateStatusBar()
+            },
+            onFinish: { [weak self] _ in
+                guard let self, self.searchGeneration == generation else { return }
+                self.searchTask = nil
+            }
+        )
+        searchTask = task
+    }
+
+    private func cancelRecursiveSearch() {
+        searchDebounce?.cancel()
+        searchDebounce = nil
+        searchGeneration += 1
+        searchTask?.cancel()
+        searchTask = nil
+        if fileTable.isShowingSearchResults {
+            fileTable.clearSearchResults()
+        }
+        fileTable.filterText = ""
     }
 
     /// Space. Opens the Quick Look panel for the selection, or closes it.
