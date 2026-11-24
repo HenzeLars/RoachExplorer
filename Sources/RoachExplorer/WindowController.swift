@@ -1359,7 +1359,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// "12 items", or "12 items, 3 selected, 4 KB" with a selection.
+    /// "12 items", or "12 items, 3 selected, 4 KB" with a selection, then the
+    /// volume's free space after a dash: "12 items — 45 GB free".
     /// Folders count as 0 bytes: the size column shows "—" for them,
     /// and a recursive folder size is not a first-round thing.
     private func updateStatusBar() {
@@ -1371,8 +1372,27 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             let bytes = selected.reduce(Int64(0)) { $0 + ($1.isFolder ? 0 : $1.size) }
             text += ", \(Format.size(bytes))"
         }
+        if let currentURL, let free = freeSpace(of: currentURL) {
+            text += " — \(Format.size(free)) free"
+        }
         statusBar.text = text
         syncQuickLook()
+    }
+
+    /// Free space on the volume behind the open folder. The "important usage"
+    /// figure is the one Finder shows; the plain capacity is the fallback for
+    /// volumes that do not answer it. Nil when the folder vanished mid-read or
+    /// the mount cannot report, in which case the bar simply says nothing.
+    private func freeSpace(of folder: URL) -> Int64? {
+        let keys: Set<URLResourceKey> = [
+            .volumeAvailableCapacityForImportantUsageKey,
+            .volumeAvailableCapacityKey,
+        ]
+        guard let values = try? folder.resourceValues(forKeys: keys) else { return nil }
+        let bytes = values.volumeAvailableCapacityForImportantUsage
+            ?? values.volumeAvailableCapacity.map(Int64.init)
+        guard let bytes, bytes >= 0 else { return nil }
+        return bytes
     }
 
     /// Selects the rows whose files are in `urls`, if the filter still shows them.
