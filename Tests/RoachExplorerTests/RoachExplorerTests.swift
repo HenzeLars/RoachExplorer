@@ -202,6 +202,26 @@ final class FolderViewEntryTests: XCTestCase {
         XCTAssertEqual(settings(300), FolderViewSettings.default)
         XCTAssertNotEqual(settings(301), FolderViewSettings.default)
     }
+
+    func testMixingFoldersAndFilesIsNotTheDefault() {
+        let mixed = FolderViewSettings(
+            sortColumn: "Name",
+            sortAscending: true,
+            columnWidths: FolderViewSettings.default.columnWidths,
+            foldersFirst: false
+        )
+        XCTAssertNotEqual(mixed, FolderViewSettings.default)
+    }
+
+    /// Files written before "folders first" existed must still decode, as on.
+    func testAnOlderEntryWithoutFoldersFirstDecodesAsOn() throws {
+        let json = """
+        {"path":"/old","settings":{"sortColumn":"Name","sortAscending":true,
+         "columnWidths":{"Name":300,"Date modified":120,"Size":80,"Kind":180}}}
+        """
+        let entry = try JSONDecoder().decode(FolderViewEntry.self, from: Data(json.utf8))
+        XCTAssertTrue(entry.settings.foldersFirst)
+    }
 }
 
 final class LinkTargetTests: XCTestCase {

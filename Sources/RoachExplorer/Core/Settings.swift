@@ -27,11 +27,35 @@ struct WindowFrame: Codable {
     var height: Double
 }
 
-/// Per-folder view settings: sort column/direction and column widths.
+/// Per-folder view settings: sort column/direction, column widths, and whether
+/// folders stay pinned on top.
 struct FolderViewSettings: Codable, Equatable {
     var sortColumn: String
     var sortAscending: Bool
     var columnWidths: [String: Double]
+    var foldersFirst: Bool
+
+    init(
+        sortColumn: String,
+        sortAscending: Bool,
+        columnWidths: [String: Double],
+        foldersFirst: Bool = true
+    ) {
+        self.sortColumn = sortColumn
+        self.sortAscending = sortAscending
+        self.columnWidths = columnWidths
+        self.foldersFirst = foldersFirst
+    }
+
+    /// `foldersFirst` arrived after the first release of this file. Older
+    /// entries decode as "on", which is how the list behaved before.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sortColumn = try container.decode(String.self, forKey: .sortColumn)
+        sortAscending = try container.decode(Bool.self, forKey: .sortAscending)
+        columnWidths = try container.decode([String: Double].self, forKey: .columnWidths)
+        foldersFirst = try container.decodeIfPresent(Bool.self, forKey: .foldersFirst) ?? true
+    }
 
     static let `default` = FolderViewSettings(
         sortColumn: "Name",
@@ -41,7 +65,8 @@ struct FolderViewSettings: Codable, Equatable {
             "Date modified": 120,
             "Size": 80,
             "Kind": 180
-        ]
+        ],
+        foldersFirst: true
     )
 }
 

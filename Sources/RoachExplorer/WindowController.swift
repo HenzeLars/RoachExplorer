@@ -123,6 +123,15 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             self.scheduleViewSettingsSave(for: current)
         }
 
+        // "Folders first" lives in the status bar but belongs to the folder view.
+        statusBar.onFoldersFirstChange = { [weak self] on in
+            guard let self else { return }
+            self.fileTable.foldersFirst = on
+            if let current = self.currentURL {
+                self.scheduleViewSettingsSave(for: current)
+            }
+        }
+
         contentView.addSubview(statusBar)
         contentView.addSubview(pathBar)
         contentView.addSubview(filterBar)
@@ -336,6 +345,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             fileTable.resetToDefaultViewSettings()
         }
         fileTable.onViewSettingsChange = callback
+        statusBar.showsFoldersFirst = fileTable.foldersFirst
     }
 
     @objc func goBack(_ sender: Any?) {

@@ -196,11 +196,20 @@ final class FileTable: NSTableView {
     }
 
     /// The column a header click sorts by, and its direction.
-    /// Folders stay first in every order.
     private var sortColumn = "Name"
     private var sortAscending = true
 
-    /// Current view settings (sort + column widths) for persistence.
+    /// Folders pinned above files, or mixed in with them by the active column.
+    /// One of the per-folder view settings.
+    var foldersFirst = true {
+        didSet {
+            guard foldersFirst != oldValue else { return }
+            applySort()
+            reloadData()
+        }
+    }
+
+    /// Current view settings (sort + column widths + folders first) for persistence.
     var viewSettings: FolderViewSettings {
         var widths: [String: Double] = [:]
         for column in tableColumns {
@@ -209,14 +218,16 @@ final class FileTable: NSTableView {
         return FolderViewSettings(
             sortColumn: sortColumn,
             sortAscending: sortAscending,
-            columnWidths: widths
+            columnWidths: widths,
+            foldersFirst: foldersFirst
         )
     }
 
-    /// Apply persisted view settings (sort + column widths).
+    /// Apply persisted view settings (sort + column widths + folders first).
     func applyViewSettings(_ settings: FolderViewSettings) {
         sortColumn = settings.sortColumn
         sortAscending = settings.sortAscending
+        foldersFirst = settings.foldersFirst
         for column in tableColumns {
             if let width = settings.columnWidths[column.identifier.rawValue] {
                 column.width = CGFloat(width)
@@ -231,6 +242,7 @@ final class FileTable: NSTableView {
     func resetToDefaultViewSettings() {
         sortColumn = "Name"
         sortAscending = true
+        foldersFirst = true
         for column in tableColumns {
             switch column.identifier.rawValue {
             case "Name": column.width = 300
@@ -245,10 +257,10 @@ final class FileTable: NSTableView {
         reloadData()
     }
 
-    /// Folders first, then the active column, then name as the tie-break.
+    /// Folders first when asked, then the active column, then name as the tie-break.
     private func applySort() {
         storedItems.sort { a, b in
-            if a.isFolder != b.isFolder { return a.isFolder }
+            if foldersFirst, a.isFolder != b.isFolder { return a.isFolder }
             let order = compare(a, b)
             return sortAscending ? order != .orderedDescending : order != .orderedAscending
         }
