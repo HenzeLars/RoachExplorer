@@ -616,7 +616,7 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Delete")
         alert.buttons[1].keyEquivalent = ""
-        let response = alert.runModal()
+        let response = runAlertNearCursor(alert)
         guard response == .alertSecondButtonReturn else { return }
         var failures: [String] = []
         for item in items {
@@ -630,6 +630,49 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         if !failures.isEmpty {
             present(message: failures.joined(separator: "\n"))
         }
+    }
+
+    /// `NSAlert.runModal()` centers its window on the screen. Running the
+    /// session on the already-positioned window keeps the confirmation next
+    /// to the pointer, the same way the info window places itself.
+    private func runAlertNearCursor(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        alert.layout()
+        let window = alert.window
+        placeNearMouse(window)
+        window.makeKeyAndOrderFront(nil)
+        let response = NSApp.runModal(for: window)
+        window.orderOut(nil)
+        return response
+    }
+
+    /// Beside the pointer, on the same screen. A fixed origin is the bottom-left
+    /// corner, which on a wide display is nowhere near the click.
+    private func placeNearMouse(_ window: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? window.screen
+            ?? NSScreen.main
+        guard let screen else { return }
+        let visible = screen.visibleFrame
+        let frame = window.frame
+        let gap: CGFloat = 12
+
+        var x = mouse.x + gap
+        if x + frame.width > visible.maxX - 8 {
+            x = mouse.x - frame.width - gap
+        }
+        var y = mouse.y - frame.height - gap
+        if y < visible.minY + 8 {
+            y = mouse.y + gap
+        }
+        x = clamped(x, lower: visible.minX + 8, upper: visible.maxX - frame.width - 8)
+        y = clamped(y, lower: visible.minY + 8, upper: visible.maxY - frame.height - 8)
+        window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func clamped(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        if upper < lower { return lower }
+        return min(max(value, lower), upper)
     }
 
     private func dropMissingCuts() {
