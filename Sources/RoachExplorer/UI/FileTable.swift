@@ -97,9 +97,9 @@ final class FileTable: NSTableView {
                 : folderItems.filter { $0.name.lowercased().contains(needle) }
         }
         applySort()
-        // Two lines of text per row while results are showing.
-        let height: CGFloat = searchResults == nil ? 22 : 40
-        if rowHeight != height { rowHeight = height }
+        // A second line of text (a link target, or where a search result
+        // lives) needs the taller row. `heightOfRow` decides per row.
+        if rowHeight != 22 { rowHeight = 22 }
         reloadData()
         let rows = IndexSet(storedItems.indices.filter { selectedURLs.contains(storedItems[$0].url) })
         if !rows.isEmpty {
@@ -740,6 +740,13 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
         items.count
     }
 
+    /// Rows with a second line are taller. Everything else keeps the dense
+    /// 22 pt. Search results and symlinks are the only two-line rows.
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard row >= 0, row < items.count else { return 22 }
+        return detail(for: items[row]).isEmpty ? 22 : 40
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         onSelectionChange?()
     }
@@ -824,7 +831,7 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
             nameCell.imageView?.image = icon(for: item)
             nameCell.textField?.stringValue = item.name
             nameCell.showLinkMark = item.isLink
-            nameCell.detail = isShowingSearchResults ? location(of: item) : ""
+            nameCell.detail = detail(for: item)
             cell = nameCell
         } else {
             let textCell = TextCellView(font: listFont)
@@ -854,6 +861,14 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
         guard parent != root else { return "" }
         guard parent.hasPrefix(root) else { return parent }
         return String(parent.dropFirst(root.count).drop(while: { $0 == "/" }))
+    }
+
+    /// The second line of a row. While searching, a result says where it lives.
+    /// Otherwise only a symlink has one: an arrow and its target.
+    private func detail(for item: FileItem) -> String {
+        if isShowingSearchResults { return location(of: item) }
+        if let target = item.linkTarget { return "→ \(target)" }
+        return ""
     }
 
     private func value(for item: FileItem, column: String) -> String {        switch column {

@@ -12,6 +12,9 @@ struct FileItem {
     let size: Int64
     let modified: Date
     let kind: String
+    /// Where a symbolic link points, as an absolute path with the home folder
+    /// shortened to `~`. Nil for everything that is not a link.
+    let linkTarget: String?
 }
 
 enum FileSystem {
@@ -29,17 +32,37 @@ enum FileSystem {
     static func item(at url: URL) -> FileItem? {
         let values = (try? url.resourceValues(forKeys: itemKeys)) ?? URLResourceValues()
         let isFolder = values.isDirectory ?? false
+        let isLink = values.isSymbolicLink ?? false
         return FileItem(
             url: url,
             name: url.lastPathComponent,
             isFolder: isFolder,
             isPackage: (values.isPackage ?? false) && isFolder,
-            isLink: values.isSymbolicLink ?? false,
+            isLink: isLink,
             isHidden: url.lastPathComponent.hasPrefix("."),
             size: Int64(values.fileSize ?? 0),
             modified: values.contentModificationDate ?? Date(),
-            kind: kind(for: url, isFolder: isFolder, typeIdentifier: values.typeIdentifier)
+            kind: kind(for: url, isFolder: isFolder, typeIdentifier: values.typeIdentifier),
+            linkTarget: isLink ? linkTarget(for: url) : nil
         )
+    }
+
+    /// A link stores whatever text was passed to `ln -s`, which can be relative
+    /// to the link's own folder. Resolve that, then shorten `/Users/name` to `~`
+    /// so the second line stays readable.
+    private static func linkTarget(for url: URL) -> String? {
+        guard let raw = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else {
+            return nil
+        }
+        let absolute = raw.hasPrefix("/")
+            ? raw
+            : url.deletingLastPathComponent().appendingPathComponent(raw).standardizedFileURL.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if absolute == home { return "~" }
+        if absolute.hasPrefix(home + "/") {
+            return "~" + String(absolute.dropFirst(home.count))
+        }
+        return absolute
     }
 
     /// All entries of `directory`, dotfiles included. Folders first,

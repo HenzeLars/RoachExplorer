@@ -160,6 +160,73 @@ final class AliasTests: XCTestCase {
     }
 }
 
+/// The second line under a link row. The link text on disk is whatever `ln -s`
+/// was given, so a relative one has to be resolved before it is shown.
+final class LinkTargetTests: XCTestCase {
+    func testAnAbsoluteLinkKeepsItsPath() throws {
+        let base = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let original = base.appendingPathComponent("notes.md")
+        try Data("x".utf8).write(to: original)
+        let link = base.appendingPathComponent("abs-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: original)
+
+        XCTAssertEqual(FileSystem.item(at: link)?.linkTarget, original.standardizedFileURL.path)
+    }
+
+    func testARelativeLinkIsResolvedAgainstItsFolder() throws {
+        let base = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let folder = base.appendingPathComponent("sub", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let link = base.appendingPathComponent("rel-link")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "sub")
+
+        XCTAssertEqual(FileSystem.item(at: link)?.linkTarget, folder.standardizedFileURL.path)
+    }
+
+    func testABrokenLinkStillShowsWhereItPoints() throws {
+        let base = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let link = base.appendingPathComponent("broken-link")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path,
+            withDestinationPath: "/nowhere/at/all"
+        )
+
+        XCTAssertEqual(FileSystem.item(at: link)?.linkTarget, "/nowhere/at/all")
+    }
+
+    func testTheHomeFolderIsShortenedToATilde() throws {
+        let base = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let link = base.appendingPathComponent("home-link")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path,
+            withDestinationPath: home.appendingPathComponent("Documents").path
+        )
+
+        XCTAssertEqual(FileSystem.item(at: link)?.linkTarget, "~/Documents")
+    }
+
+    func testAnOrdinaryFileHasNoTarget() throws {
+        let base = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("plain.txt")
+        try Data("x".utf8).write(to: file)
+
+        XCTAssertNil(FileSystem.item(at: file)?.linkTarget)
+    }
+
+    private func temporaryFolder() -> URL {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("roach-link-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+}
+
 final class SearchTests: XCTestCase {
     func testMatchesIsACaseInsensitiveSubstring() {
         XCTAssertTrue(Search.matches(name: "notes.md", query: "NOTES"))
