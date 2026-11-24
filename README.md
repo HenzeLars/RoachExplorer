@@ -24,9 +24,11 @@ Work in progress. Built and used daily by one person, so it covers the operation
 
 **The list**
 
-- Dense four-column list: Name, Date modified, Size, Kind. Folders first, click a header to sort.
-- Icons, and a chain symbol on symlinks. Bundles like `.app` are one row, not a folder you can wander into.
-- Selection with a status bar showing item count, selection count, and selection size.
+- Dense four-column list: Name, Date modified, Size, Kind. Click a header to sort.
+- **Folders first** is a checkbox in the status bar. On, folders stay pinned above files in every order; off, everything is mixed and sorted by the active column — handy in Downloads sorted by date, where the newest thing should be on top whether it is a file or a folder.
+- Each folder remembers its own view: sort column and direction, column widths, and the **Folders first** state. Tuned folders are kept in `folderViews.json`; a folder you never touched opens with the defaults.
+- Icons, and a chain symbol on symlinks. A link row also shows where it points on a second line, resolved and with your home folder shortened to `~`. Bundles like `.app` are one row, not a folder you can wander into.
+- Selection with a status bar showing item count, selection count, selection size, and the free space on the volume.
 
 **File operations**
 
@@ -138,7 +140,7 @@ Sources/RoachExplorer/
     Summary.swift         recursive size walks
     Permissions.swift     mode bits, without following symlinks
     CockroachName.swift   generated folder names
-    Settings.swift        last path, window frame, favourites
+    Settings.swift        last path, window frame, favourites, per-folder views
     Format.swift          sizes, dates, kinds
   UI/
     FileTable.swift       the list, inline editors, drag source
@@ -147,7 +149,7 @@ Sources/RoachExplorer/
     FilterBar.swift       the `Cmd+F` row
     InfoWindow.swift      details summary and permissions
     TransferProgress.swift the progress panel
-    StatusBar.swift       counts and size at the bottom
+    StatusBar.swift       counts, size, free space, folders-first toggle
 Tests/RoachExplorerTests/
   RoachExplorerTests.swift  quoting, sizes, drop rules, cockroach names, aliases
 ```
@@ -156,7 +158,7 @@ Two design decisions worth knowing about:
 
 **The pasteboard is the contract.** Dragging onto a terminal is why the app is native rather than a web view. Terminal.app reads `public.file-url`; iTerm and Warp read the string. The drag writes both, and the string is quoted for a POSIX shell so paths with spaces, quotes, or newlines survive.
 
-**Settings are plain JSON** at `~/.config/roach-explorer/settings.json` — last folder, window frame, favourites. Not Application Support, easy to read and edit.
+**Settings are plain JSON** in `~/.config/roach-explorer/`. `settings.json` holds the last folder, the window frame and favourites; `folderViews.json` holds the per-folder sort, column widths and **Folders first** state, most recently used first and capped at 100. Not Application Support, easy to read and edit.
 
 ## Not here
 
