@@ -68,6 +68,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var searchTask: SearchTask?
     private var searchDebounce: DispatchWorkItem?
     private var searchGeneration = 0
+    /// A view change that is waiting out its debounce before it is written.
+    private var folderViewSaveWork: DispatchWorkItem?
 
     init(startingURL: URL?) {
         let settings = SettingsStore.load()
@@ -113,6 +115,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             var stored = SettingsStore.load()
             stored.favorites = paths
             SettingsStore.save(stored)
+        }
+
+        // The user changed sort or a column width. Save it shortly, or when leaving.
+        fileTable.onViewSettingsChange = { [weak self] in
+            guard let self, let current = self.currentURL else { return }
+            self.scheduleViewSettingsSave(for: current)
         }
 
         contentView.addSubview(statusBar)
@@ -291,6 +299,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         cancelRecursiveSearch()
         let destination = nearestExistingAncestor(of: url)
         if filterVisible { setFilterVisible(false) }
+
+        // Keep what the folder we are leaving looked like, before its rows go.
+        if let current = currentURL, current != destination {
+            persistViewSettings(for: current, settings: fileTable.viewSettings)
+        }
+
         if remember, let current = currentURL, current != destination {
             backStack.append(current)
             forwardStack.removeAll()
@@ -300,6 +314,8 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
         fileTable.folderURL = destination
         fileTable.items = FileSystem.listItems(in: destination)
+        applyStoredViewSettings(for: destination)
+
         currentURL = destination
         sidebar.highlight(url: destination)
         window?.title = destination.path == "/" ? "/" : destination.lastPathComponent
@@ -307,6 +323,19 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         updateStatusBar()
         pathBar.setNavigation(canGoBack: !backStack.isEmpty, canGoForward: !forwardStack.isEmpty)
         watch(destination)
+    }
+
+    /// The stored look for a folder, or the defaults when it never had one.
+    /// The change callback is muted: this is us doing it, not the user.
+    private func applyStoredViewSettings(for folder: URL) {
+        let callback = fileTable.onViewSettingsChange
+        fileTable.onViewSettingsChange = nil
+        if let saved = SettingsStore.fetchFolderView(path: folder.standardizedFileURL.path) {
+            fileTable.applyViewSettings(saved)
+        } else {
+            fileTable.resetToDefaultViewSettings()
+        }
+        fileTable.onViewSettingsChange = callback
     }
 
     @objc func goBack(_ sender: Any?) {
@@ -343,6 +372,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             return
         }
         fileTable.items = FileSystem.listItems(in: currentURL)
+        // A refresh also re-reads the stored look, so a change made in a second
+        // window shows up here instead of being kept in this table only.
+        applyStoredViewSettings(for: currentURL)
         updateStatusBar()
     }
 
@@ -1406,6 +1438,31 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         fileTable.scrollRowToVisible(first)
     }
 
+    /// Store or forget a folder's look. Defaults are not worth a line in the file,
+/// so a folder that drifts back to them loses its entry.
+    private func persistViewSettings(for folder: URL, settings: FolderViewSettings) {
+        let path = folder.standardizedFileURL.path
+        if settings == FolderViewSettings.default {
+            SettingsStore.removeFolderView(path: path)
+        } else {
+            SettingsStore.upsertFolderView(path: path, settings: settings)
+        }
+    }
+
+    /// The user moved a divider or clicked a header. Write soon, not on every
+    /// twitch of the mouse, and not only when the folder is left.
+    private func scheduleViewSettingsSave(for folder: URL) {
+        folderViewSaveWork?.cancel()
+        let normalized = folder.standardizedFileURL
+        let settings = fileTable.viewSettings
+        let work = DispatchWorkItem { [weak self] in
+            self?.persistViewSettings(for: normalized, settings: settings)
+            self?.folderViewSaveWork = nil
+        }
+        folderViewSaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+    }
+
     func windowWillClose(_ notification: Notification) {
         watchSource?.cancel()
         watchSource = nil
@@ -1419,6 +1476,12 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
         if let panel = QLPreviewPanel.shared(), (panel.dataSource as AnyObject?) === self {
             panel.orderOut(nil)
+        }
+        // Do not lose a change that was still waiting for its debounce.
+        folderViewSaveWork?.cancel()
+        folderViewSaveWork = nil
+        if let currentURL {
+            persistViewSettings(for: currentURL, settings: fileTable.viewSettings)
         }
         guard let window, let currentURL else { return }
         var settings = SettingsStore.load()

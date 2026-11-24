@@ -142,6 +142,8 @@ final class FileTable: NSTableView {
     private var editCancelled = false
     /// Right-clicked row, so Rename hits that row and not whichever was focused.
     private var contextRow: Int?
+    /// Called when the user changes sort or column widths, so the window can persist.
+    var onViewSettingsChange: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -167,6 +169,14 @@ final class FileTable: NSTableView {
 
         target = self
         doubleAction = #selector(openClickedRow(_:))
+        // Column resize -> persist view settings.
+        NotificationCenter.default.addObserver(
+            forName: NSTableView.columnDidResizeNotification,
+            object: self,
+            queue: .main
+        ) { [weak self] _ in
+            self?.onViewSettingsChange?()
+        }
     }
 
     @available(*, unavailable)
@@ -189,6 +199,51 @@ final class FileTable: NSTableView {
     /// Folders stay first in every order.
     private var sortColumn = "Name"
     private var sortAscending = true
+
+    /// Current view settings (sort + column widths) for persistence.
+    var viewSettings: FolderViewSettings {
+        var widths: [String: Double] = [:]
+        for column in tableColumns {
+            widths[column.identifier.rawValue] = Double(column.width)
+        }
+        return FolderViewSettings(
+            sortColumn: sortColumn,
+            sortAscending: sortAscending,
+            columnWidths: widths
+        )
+    }
+
+    /// Apply persisted view settings (sort + column widths).
+    func applyViewSettings(_ settings: FolderViewSettings) {
+        sortColumn = settings.sortColumn
+        sortAscending = settings.sortAscending
+        for column in tableColumns {
+            if let width = settings.columnWidths[column.identifier.rawValue] {
+                column.width = CGFloat(width)
+            }
+        }
+        sortDescriptors = [NSSortDescriptor(key: sortColumn, ascending: sortAscending)]
+        applySort()
+        reloadData()
+    }
+
+    /// Reset to hard-coded defaults (used when a folder has no saved settings).
+    func resetToDefaultViewSettings() {
+        sortColumn = "Name"
+        sortAscending = true
+        for column in tableColumns {
+            switch column.identifier.rawValue {
+            case "Name": column.width = 300
+            case "Date modified": column.width = 120
+            case "Size": column.width = 80
+            case "Kind": column.width = 180
+            default: break
+            }
+        }
+        sortDescriptors = [NSSortDescriptor(key: sortColumn, ascending: sortAscending)]
+        applySort()
+        reloadData()
+    }
 
     /// Folders first, then the active column, then name as the tie-break.
     private func applySort() {
@@ -758,6 +813,7 @@ extension FileTable: NSTableViewDataSource, NSTableViewDelegate {
         sortAscending = descriptor.ascending
         applySort()
         reloadData()
+        onViewSettingsChange?()
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {

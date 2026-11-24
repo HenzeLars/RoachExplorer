@@ -27,6 +27,43 @@ struct WindowFrame: Codable {
     var height: Double
 }
 
+/// Per-folder view settings: sort column/direction and column widths.
+struct FolderViewSettings: Codable, Equatable {
+    var sortColumn: String
+    var sortAscending: Bool
+    var columnWidths: [String: Double]
+
+    static let `default` = FolderViewSettings(
+        sortColumn: "Name",
+        sortAscending: true,
+        columnWidths: [
+            "Name": 300,
+            "Date modified": 120,
+            "Size": 80,
+            "Kind": 180
+        ]
+    )
+}
+
+/// One entry in the MRU list of folder views.
+struct FolderViewEntry: Codable {
+    let path: String
+    let settings: FolderViewSettings
+
+    /// The list after remembering `path` again: it moves to the front, and the
+    /// tail past `cap` falls off. Pure, so it can be tested without a file.
+    static func updating(
+        _ entries: [FolderViewEntry],
+        path: String,
+        settings: FolderViewSettings,
+        cap: Int
+    ) -> [FolderViewEntry] {
+        var updated = entries.filter { $0.path != path }
+        updated.insert(FolderViewEntry(path: path, settings: settings), at: 0)
+        return Array(updated.prefix(cap))
+    }
+}
+
 /// Settings live in `~/.config/roach-explorer/`, confirmed — not Application Support.
 enum SettingsStore {
     /// `ROACH_CONFIG_DIR` moves the whole settings folder, so a test run
@@ -44,6 +81,13 @@ enum SettingsStore {
         directory.appendingPathComponent("settings.json")
     }
 
+    private static var folderViewsURL: URL {
+        directory.appendingPathComponent("folderViews.json")
+    }
+
+    /// Maximum number of folder view entries to keep. Oldest are dropped.
+    static let maxFolderViews = 100
+
     static func load() -> Settings {
         guard let data = try? Data(contentsOf: fileURL) else { return Settings() }
         return (try? JSONDecoder().decode(Settings.self, from: data)) ?? Settings()
@@ -57,5 +101,52 @@ enum SettingsStore {
         } catch {
             NSLog("Roach Explorer: could not save settings: \(error)")
         }
+    }
+
+    /// Load the per-folder view list, most-recent-first. Entries that are just the
+/// defaults are ignored, so an older build's noise does not count as "custom".
+    static func loadFolderViews() -> [FolderViewEntry] {
+        guard let data = try? Data(contentsOf: folderViewsURL) else { return [] }
+        let entries = (try? JSONDecoder().decode([FolderViewEntry].self, from: data)) ?? []
+        return entries.filter { $0.settings != FolderViewSettings.default }
+    }
+
+    /// Save the per-folder view list (already ordered most-recent-first, capped).
+    static func saveFolderViews(_ entries: [FolderViewEntry]) {
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(entries)
+            try data.write(to: folderViewsURL, options: .atomic)
+        } catch {
+            NSLog("Roach Explorer: could not save folder views: \(error)")
+        }
+    }
+
+    /// Upsert a folder's view settings and move it to the front (MRU).
+    /// Drops entries past `maxFolderViews`.
+    static func upsertFolderView(path: String, settings: FolderViewSettings) {
+        let updated = FolderViewEntry.updating(
+            loadFolderViews(),
+            path: (path as NSString).standardizingPath,
+            settings: settings,
+            cap: maxFolderViews
+        )
+        saveFolderViews(updated)
+    }
+
+    /// Forget a folder's custom view. Used when it drifts back to the defaults,
+    /// so the list only ever holds folders someone actually tuned.
+    static func removeFolderView(path: String) {
+        let normalized = (path as NSString).standardizingPath
+        var entries = loadFolderViews()
+        let before = entries.count
+        entries.removeAll { $0.path == normalized }
+        if entries.count != before { saveFolderViews(entries) }
+    }
+
+    /// Fetch a folder's view settings. Reading does not reorder the file.
+    static func fetchFolderView(path: String) -> FolderViewSettings? {
+        let normalized = (path as NSString).standardizingPath
+        return loadFolderViews().first { $0.path == normalized }?.settings
     }
 }

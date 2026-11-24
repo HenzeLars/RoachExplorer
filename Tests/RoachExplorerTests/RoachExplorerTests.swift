@@ -162,6 +162,48 @@ final class AliasTests: XCTestCase {
 
 /// The second line under a link row. The link text on disk is whatever `ln -s`
 /// was given, so a relative one has to be resolved before it is shown.
+/// The MRU list behind per-folder views. Pure ordering rules only.
+final class FolderViewEntryTests: XCTestCase {
+    private func settings(_ nameWidth: Double) -> FolderViewSettings {
+        FolderViewSettings(
+            sortColumn: "Name",
+            sortAscending: true,
+            columnWidths: ["Name": nameWidth, "Date modified": 120, "Size": 80, "Kind": 180]
+        )
+    }
+
+    func testANewFolderGoesToTheFront() {
+        let list = FolderViewEntry.updating([], path: "/a", settings: settings(100), cap: 100)
+        XCTAssertEqual(list.map(\.path), ["/a"])
+    }
+
+    func testTheSameFolderMovesToTheFrontWithoutDuplicates() {
+        let start = FolderViewEntry.updating([], path: "/a", settings: settings(100), cap: 100)
+        let withB = FolderViewEntry.updating(start, path: "/b", settings: settings(90), cap: 100)
+        let again = FolderViewEntry.updating(withB, path: "/a", settings: settings(120), cap: 100)
+
+        XCTAssertEqual(again.map(\.path), ["/a", "/b"])
+        XCTAssertEqual(again.first?.settings.columnWidths["Name"], 120)
+    }
+
+    func testTheOldestFallOffAtTheCap() {
+        var list: [FolderViewEntry] = []
+        for index in 0..<105 {
+            list = FolderViewEntry.updating(list, path: "/f\(index)", settings: settings(100), cap: 100)
+        }
+
+        XCTAssertEqual(list.count, 100)
+        XCTAssertEqual(list.first?.path, "/f104")
+        XCTAssertEqual(list.last?.path, "/f5")
+        XCTAssertFalse(list.contains { $0.path == "/f0" })
+    }
+
+    func testDefaultsAreNotWorthAnEntry() {
+        XCTAssertEqual(settings(300), FolderViewSettings.default)
+        XCTAssertNotEqual(settings(301), FolderViewSettings.default)
+    }
+}
+
 final class LinkTargetTests: XCTestCase {
     func testAnAbsoluteLinkKeepsItsPath() throws {
         let base = temporaryFolder()
