@@ -10,7 +10,7 @@ It is a working file manager, not a Finder clone: dense list, always-visible pat
 
 Work in progress. Built and used daily by one person, so it covers the operations that came up rather than every corner of the file system.
 
-![Roach Explorer: path bar and segments at the top, places and favourites on the left, a dense sortable list, counts and size in the status bar](screenshot.png)
+![Roach Explorer: path bar and segments at the top, places and favourites on the left, a dense sortable list, counts, size and free space in the status bar](images/overview.png)
 
 ## Features
 
@@ -26,6 +26,8 @@ Work in progress. Built and used daily by one person, so it covers the operation
 
 - Dense four-column list: Name, Date modified, Size, Kind. Click a header to sort.
 - **Folders first** is a checkbox in the status bar. On, folders stay pinned above files in every order; off, everything is mixed and sorted by the active column — handy in Downloads sorted by date, where the newest thing should be on top whether it is a file or a folder.
+
+![The same folder with "Folders first" off, sorted by name](images/folders-mixed.png)
 - Each folder remembers its own view: sort column and direction, column widths, and the **Folders first** state. Tuned folders are kept in `folderViews.json`; a folder you never touched opens with the defaults.
 - Icons, and a chain symbol on symlinks. A link row also shows where it points on a second line, resolved and with your home folder shortened to `~`. Bundles like `.app` are one row, not a folder you can wander into.
 - Selection with a status bar showing item count, selection count, selection size, and the free space on the volume.
@@ -51,6 +53,9 @@ Work in progress. Built and used daily by one person, so it covers the operation
 - Copy Path with `Option+Cmd+C` puts one path per line on the clipboard, ready for a shell. Nothing selected copies the open folder. Show in Finder and Open in Terminal are in the context menu, for when you want to leave.
 - Find by name with `Cmd+F` or the magnifying-glass **Find** button. It filters the current folder by default; check **Include subfolders** to search recursively.
 - Connect to a server with `Cmd+K`, the plug button in the path bar, or File ▸ **Connect to Server…**. NFS and Windows (SMB) shares mount without a trip through Finder; the sheet builds the address from host, share, username and password. The last 20 successful addresses are kept, with a dropdown and autocomplete — the username comes back, the password never does.
+
+![Connect to Server, NFS](images/connect-nfs.png)
+![Connect to Server, Windows (SMB)](images/connect-smb.png)
 - Mounted shares, disk images and external disks get a **Volumes** section in the sidebar. Right-click one to eject it; ejecting the open folder leaves you in the nearest folder that still exists.
 - Hold a dragged file over a sidebar row for a moment and the window opens that folder, so a deep destination is two gestures away without a sidebar tree.
 - Drag a selection into Terminal, iTerm, or Warp and get a shell-escaped path: single quotes, embedded quotes handled, one argument per file.
