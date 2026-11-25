@@ -79,18 +79,27 @@ enum Volumes {
     static func connect(url: URL, completion: @escaping (URL?) -> Void) {
         let scheme = url.scheme?.lowercased() ?? ""
         if scheme == "nfs" {
-            connectDirectly("/sbin/mount_nfs", url: url, completion: completion)
+            // mount_nfs wants `host:/export`, not the `nfs://host/export` URL.
+            // The URL form makes it parse "nfs" as the host and fail to resolve.
+            connectDirectly("/sbin/mount_nfs", url: url, argument: nfsArgument(for: url), completion: completion)
             return
         }
         if scheme == "smb" || scheme == "cifs" {
             if url.password == nil {
                 completion(NSWorkspace.shared.open(url) ? url : nil)
             } else {
-                connectDirectly("/sbin/mount_smbfs", url: url, completion: completion)
+                connectDirectly("/sbin/mount_smbfs", url: url, argument: url.absoluteString, completion: completion)
             }
             return
         }
         completion(NSWorkspace.shared.open(url) ? url : nil)
+    }
+
+    /// `nfs://host/export` → `host:/export` for mount_nfs.
+    static func nfsArgument(for url: URL) -> String {
+        let host = url.host ?? ""
+        let path = url.path.isEmpty ? "/" : url.path
+        return "\(host):\(path)"
     }
 
     /// Run a mount tool and wait for it, with a cap so an unreachable server
@@ -98,6 +107,7 @@ enum Volumes {
     private static func connectDirectly(
         _ tool: String,
         url: URL,
+        argument: String,
         completion: @escaping (URL?) -> Void
     ) {
         guard let mountPoint = mountPoint(for: url) else {
@@ -107,7 +117,7 @@ enum Volumes {
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = [url.absoluteString, mountPoint.path]
+            process.arguments = [argument, mountPoint.path]
             do {
                 try process.run()
             } catch {

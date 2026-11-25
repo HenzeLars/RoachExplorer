@@ -389,13 +389,13 @@ final class CockroachNameTests: XCTestCase {    func testOffersANameFromTheList(
 /// The connect sheet's address rules, without a window.
 final class ServerAddressTests: XCTestCase {
     func testNFSHostAndShare() {
-        let url = ServerAddress.url(scheme: "nfs", address: "192.168.1.223/share")
-        XCTAssertEqual(url?.absoluteString, "nfs://192.168.1.223/share")
+        let url = ServerAddress.url(scheme: "nfs", address: "192.0.2.10/share")
+        XCTAssertEqual(url?.absoluteString, "nfs://192.0.2.10/share")
     }
 
     func testNFSColonForm() {
-        let url = ServerAddress.url(scheme: "nfs", address: "192.168.1.223:/export")
-        XCTAssertEqual(url?.absoluteString, "nfs://192.168.1.223/export")
+        let url = ServerAddress.url(scheme: "nfs", address: "192.0.2.10:/export")
+        XCTAssertEqual(url?.absoluteString, "nfs://192.0.2.10/export")
     }
 
     func testNFSHostOnlyGetsTheRoot() {
@@ -571,5 +571,27 @@ final class ArchiveTests: XCTestCase {
         try Data("x".utf8).write(to: folder.appendingPathComponent("notes.zip"))
         let name = Archive.uniqueName(stem: "notes", ext: ".zip", in: folder)
         XCTAssertEqual(name, "notes 2.zip")
+    }
+}
+
+/// mount_nfs wants `host:/export`, not the `nfs://` URL. Regression guard.
+final class NFSArgumentTests: XCTestCase {
+    func testURLFormBecomesHostColonPath() {
+        let url = ServerAddress.url(scheme: "nfs", address: "192.0.2.10/export/share")
+        let argument = Volumes.nfsArgument(for: try! XCTUnwrap(url))
+        XCTAssertEqual(argument, "192.0.2.10:/export/share")
+    }
+
+    func testHostOnlyBecomesHostRoot() {
+        let url = ServerAddress.url(scheme: "nfs", address: "nas.local")
+        let argument = Volumes.nfsArgument(for: try! XCTUnwrap(url))
+        XCTAssertEqual(argument, "nas.local:/")
+    }
+
+    func testNeverLeavesTheURLSchemeIn() {
+        let url = ServerAddress.url(scheme: "nfs", address: "nas.local/export")
+        let argument = Volumes.nfsArgument(for: try! XCTUnwrap(url))
+        XCTAssertFalse(argument.hasPrefix("nfs://"))
+        XCTAssertFalse(argument.contains("nfs"))
     }
 }
