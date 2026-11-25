@@ -474,3 +474,102 @@ final class RecentServersTests: XCTestCase {
         XCTAssertEqual(settings.recentServers, [])
     }
 }
+
+/// Archive naming and command construction, without a window.
+final class ArchiveTests: XCTestCase {
+    private func item(_ path: String, folder: Bool) -> FileItem {
+        FileItem(
+            url: URL(fileURLWithPath: path),
+            name: (path as NSString).lastPathComponent,
+            isFolder: folder,
+            isPackage: false,
+            isLink: false,
+            isHidden: false,
+            size: 0,
+            modified: Date(timeIntervalSince1970: 0),
+            kind: folder ? "Folder" : "Document",
+            linkTarget: nil
+        )
+    }
+
+    func testExtensionPerFormatAndCompression() {
+        XCTAssertEqual(ArchiveSpec(format: .zip, compression: .none).fileExtension, ".zip")
+        XCTAssertEqual(ArchiveSpec(format: .zip, compression: .gzip).fileExtension, ".zip")
+        XCTAssertEqual(ArchiveSpec(format: .tar, compression: .none).fileExtension, ".tar")
+        XCTAssertEqual(ArchiveSpec(format: .tar, compression: .gzip).fileExtension, ".tar.gz")
+        XCTAssertEqual(ArchiveSpec(format: .tar, compression: .bzip2).fileExtension, ".tar.bz2")
+        XCTAssertEqual(ArchiveSpec(format: .tar, compression: .xz).fileExtension, ".tar.xz")
+    }
+
+    func testDefaultStemDropsAFileExtension() {
+        let stem = Archive.defaultStem(for: [item("/tmp/notes.md", folder: false)])
+        XCTAssertEqual(stem, "notes")
+    }
+
+    func testDefaultStemKeepsAFolderNameWhole() {
+        let stem = Archive.defaultStem(for: [item("/tmp/my.folder", folder: true)])
+        XCTAssertEqual(stem, "my.folder")
+    }
+
+    func testDefaultStemForSeveralItemsIsArchive() {
+        let stem = Archive.defaultStem(for: [
+            item("/tmp/a.txt", folder: false),
+            item("/tmp/b.txt", folder: false),
+        ])
+        XCTAssertEqual(stem, "Archive")
+    }
+
+    func testZipUsesDittoWithKeepParent() throws {
+        let folder = URL(fileURLWithPath: "/tmp/work")
+        let source = URL(fileURLWithPath: "/tmp/work/notes.md")
+        let (tool, args) = Archive.command(
+            spec: ArchiveSpec(format: .zip, compression: .none),
+            sources: [source],
+            folder: folder,
+            name: "notes.zip"
+        )
+        XCTAssertEqual(tool, "/usr/bin/ditto")
+        XCTAssertEqual(args, ["-c", "-k", "--sequesterRsrc", "--keepParent", "/tmp/work/notes.md", "/tmp/work/notes.zip"])
+    }
+
+    func testTarGzRunsFromTheFolderWithRelativeNames() {
+        let folder = URL(fileURLWithPath: "/tmp/work")
+        let sources = [
+            URL(fileURLWithPath: "/tmp/work/alpha"),
+            URL(fileURLWithPath: "/tmp/work/notes.md"),
+        ]
+        let (tool, args) = Archive.command(
+            spec: ArchiveSpec(format: .tar, compression: .gzip),
+            sources: sources,
+            folder: folder,
+            name: "bundle.tar.gz"
+        )
+        XCTAssertEqual(tool, "/usr/bin/tar")
+        XCTAssertEqual(args, ["-czf", "/tmp/work/bundle.tar.gz", "-C", "/tmp/work", "alpha", "notes.md"])
+    }
+
+    func testTarCompressionFlags() {
+        let folder = URL(fileURLWithPath: "/tmp")
+        let source = URL(fileURLWithPath: "/tmp/a")
+        func flag(_ compression: ArchiveCompression) -> String {
+            Archive.command(
+                spec: ArchiveSpec(format: .tar, compression: compression),
+                sources: [source], folder: folder, name: "a"
+            ).arguments.first!
+        }
+        XCTAssertEqual(flag(.none), "-cf")
+        XCTAssertEqual(flag(.gzip), "-czf")
+        XCTAssertEqual(flag(.bzip2), "-cjf")
+        XCTAssertEqual(flag(.xz), "-cJf")
+    }
+
+    func testUniqueNameSkipsTakenFiles() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("roach-archive-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Data("x".utf8).write(to: folder.appendingPathComponent("notes.zip"))
+        let name = Archive.uniqueName(stem: "notes", ext: ".zip", in: folder)
+        XCTAssertEqual(name, "notes 2.zip")
+    }
+}

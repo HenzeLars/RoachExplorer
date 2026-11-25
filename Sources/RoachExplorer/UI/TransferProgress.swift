@@ -6,6 +6,10 @@ import AppKit
 final class TransferProgress: NSObject {
     var onCancel: (() -> Void)?
     var onDecide: (() -> Void)?
+    /// Archives have no mid-run collisions, so the "Decide on collisions now"
+    /// button is hidden and the bar is indeterminate.
+    var showsDecide = true
+    var indeterminate = false
 
     private var panel: NSWindow?
     private var closed = false
@@ -29,16 +33,18 @@ final class TransferProgress: NSObject {
         nameLabel.frame = NSRect(x: 20, y: 72, width: 380, height: 18)
         content.addSubview(nameLabel)
 
-        bar.isIndeterminate = false
+        bar.isIndeterminate = indeterminate
         bar.minValue = 0
         bar.maxValue = 1
         bar.frame = NSRect(x: 20, y: 48, width: 380, height: 16)
         content.addSubview(bar)
 
-        let decide = NSButton(title: "Decide on collisions now", target: self, action: #selector(decide(_:)))
-        decide.bezelStyle = .rounded
-        decide.frame = NSRect(x: 16, y: 12, width: 210, height: 28)
-        content.addSubview(decide)
+        if showsDecide {
+            let decide = NSButton(title: "Decide on collisions now", target: self, action: #selector(decide(_:)))
+            decide.bezelStyle = .rounded
+            decide.frame = NSRect(x: 16, y: 12, width: 210, height: 28)
+            content.addSubview(decide)
+        }
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel(_:)))
         cancel.bezelStyle = .rounded

@@ -964,6 +964,102 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         if let failure { present(failure) }
     }
 
+    /// Compress, from the context menu and the File menu. Asks for format,
+    /// compression and name, then runs the archiver off the main thread.
+    @objc func archiveSelection(_ sender: Any?) {
+        guard let currentURL, !fileTable.selectedItems.isEmpty else { return }
+        let items = fileTable.selectedItems
+        let folder = currentURL
+        let stem = Archive.defaultStem(for: items)
+        ArchiveSheet.present(for: window, defaultStem: stem) { [weak self] spec, name in
+            guard let self else { return }
+            self.runArchive(spec: spec, stem: name, sources: items.map(\.url), folder: folder)
+        }
+    }
+
+    private final class CancelFlag { var value = false }
+
+    private func runArchive(spec: ArchiveSpec, stem: String, sources: [URL], folder: URL) {
+        let ext = spec.fileExtension
+        var name = stem + ext
+        if FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) {
+            guard let choice = askCollision(named: name) else { return }
+            switch choice {
+            case .skip:
+                return
+            case .replace:
+                break
+            case .keepBoth:
+                name = Archive.uniqueName(stem: stem, ext: ext, in: folder)
+            }
+        }
+        let target = folder.appendingPathComponent(name)
+        let (tool, arguments) = Archive.command(spec: spec, sources: sources, folder: folder, name: name)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        let cancelled = CancelFlag()
+        let progress = TransferProgress()
+        progress.showsDecide = false
+        progress.indeterminate = true
+        let clock = WorkClock()
+        clock.onFire = { progress.show(title: "Compressing") }
+        progress.onCancel = {
+            cancelled.value = true
+            process.terminate()
+        }
+
+        if filterVisible { setFilterVisible(false) }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            clock.resume()
+            var succeeded = false
+            var message: String?
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                if process.terminationStatus == 0 {
+                    succeeded = FileManager.default.fileExists(atPath: target.path)
+                    if !succeeded { message = "The archiver finished but no file was written." }
+                } else if cancelled.value {
+                    // Cancelled. Leave whatever partial file may exist alone.
+                } else {
+                    let text = String(data: data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    message = (text?.isEmpty == false ? text : nil)
+                        ?? "\((tool as NSString).lastPathComponent) exited with status \(process.terminationStatus)."
+                }
+            } catch {
+                message = error.localizedDescription
+            }
+            DispatchQueue.main.async {
+                clock.cancel()
+                progress.close()
+                guard let self else { return }
+                self.ignoreWatchUntil = Date().addingTimeInterval(0.6)
+                self.reload(nil)
+                if succeeded {
+                    self.select(urls: [target])
+                } else if !cancelled.value, let message {
+                    self.presentArchiveError(message)
+                }
+            }
+        }
+    }
+
+    private func presentArchiveError(_ message: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Could not create the archive"
+        alert.informativeText = message
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+
     /// Open With, from the context menu. The app URL rides on the menu item.
     @objc func openSelectionWithApp(_ sender: Any?) {
         guard let app = (sender as? NSMenuItem)?.representedObject as? URL else { return }

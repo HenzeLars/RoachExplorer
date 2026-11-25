@@ -533,6 +533,7 @@ final class FileTable: NSTableView {
             menu.addItem(.separator())
             menu.addItem(withTitle: "Duplicate", action: #selector(WindowController.duplicateSelection(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Make Alias", action: #selector(WindowController.makeAlias(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Compress…", action: #selector(WindowController.archiveSelection(_:)), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "Rename", action: #selector(WindowController.renameSelection(_:)), keyEquivalent: "")
             menu.addItem(.separator())

@@ -135,6 +135,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(WindowController.makeAlias(_:)),
             keyEquivalent: ""
         )
+        fileMenu.addItem(
+            withTitle: "Compress…",
+            action: #selector(WindowController.archiveSelection(_:)),
+            keyEquivalent: ""
+        )
         fileMenu.addItem(.separator())
         fileMenu.addItem(
             withTitle: "Connect to Server…",
