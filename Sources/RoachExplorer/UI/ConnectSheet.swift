@@ -256,7 +256,15 @@ final class ConnectSheet: NSWindow {
         let text = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return recentServers }
         let lowered = text.lowercased()
-        return recentServers.filter { $0.lowercased().hasPrefix(lowered) }
+        return recentServers.filter { entry in
+            if entry.lowercased().hasPrefix(lowered) { return true }
+            // "astral@host/share" should still match when typing the host.
+            if let at = entry.firstIndex(of: "@") {
+                let rest = String(entry[entry.index(after: at)...]).lowercased()
+                return rest.hasPrefix(lowered)
+            }
+            return false
+        }
     }
 
     private func showRecent(_ matches: [String]) {
@@ -272,8 +280,15 @@ final class ConnectSheet: NSWindow {
         recentList.removeFromSuperview()
     }
 
-    private func acceptRecent(_ address: String) {
-        addressField.stringValue = address
+    private func acceptRecent(_ entry: String) {
+        // `user@host/share` fills both fields, so only the password is left.
+        if let at = entry.firstIndex(of: "@"), !entry[..<at].contains("/") {
+            userField.stringValue = String(entry[..<at])
+            addressField.stringValue = String(entry[entry.index(after: at)...])
+        } else {
+            userField.stringValue = ""
+            addressField.stringValue = entry
+        }
         hideRecent()
         makeFirstResponder(addressField)
     }

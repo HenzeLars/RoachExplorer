@@ -421,6 +421,25 @@ final class ServerAddressTests: XCTestCase {
     func testAnEmptyAddressIsNoURL() {
         XCTAssertNil(ServerAddress.url(scheme: "smb", address: "   "))
     }
+
+    func testAnEmbeddedUserIsSplitOff() {
+        let url = ServerAddress.url(
+            scheme: "smb",
+            address: "astral@server/share",
+            password: "secret"
+        )
+        XCTAssertEqual(url?.absoluteString, "smb://astral:secret@server/share")
+    }
+
+    func testTheUsernameFieldWinsOverAnEmbeddedOne() {
+        let url = ServerAddress.url(
+            scheme: "smb",
+            address: "astral@server/share",
+            user: "other",
+            password: "secret"
+        )
+        XCTAssertEqual(url?.absoluteString, "smb://other:secret@server/share")
+    }
 }
 
 /// The recent-server list: newest first, no duplicates, capped.

@@ -72,32 +72,42 @@ enum Volumes {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// Mount a URL. NFS is mounted directly with `mount_nfs`, which works as
-    /// the user and needs no Finder window; SMB goes through the system's own
-    /// connect flow. The completion gets the volume to open, or nil.
+    /// Mount a URL. NFS and SMB are mounted directly with the system's
+    /// mount tools, which works as the user and needs no Finder window. A
+    /// share without a password goes through the system connect flow, because
+    /// only that can ask for one. The completion gets the volume to open.
     static func connect(url: URL, completion: @escaping (URL?) -> Void) {
-        if url.scheme?.lowercased() == "nfs" {
-            connectNFS(url, completion: completion)
+        let scheme = url.scheme?.lowercased() ?? ""
+        if scheme == "nfs" {
+            connectDirectly("/sbin/mount_nfs", url: url, completion: completion)
+            return
+        }
+        if scheme == "smb" || scheme == "cifs" {
+            if url.password == nil {
+                completion(NSWorkspace.shared.open(url) ? url : nil)
+            } else {
+                connectDirectly("/sbin/mount_smbfs", url: url, completion: completion)
+            }
             return
         }
         completion(NSWorkspace.shared.open(url) ? url : nil)
     }
 
-    private static func connectNFS(_ url: URL, completion: @escaping (URL?) -> Void) {
-        guard let host = url.host, !host.isEmpty else {
-            completion(nil)
-            return
-        }
-        let export = url.path.isEmpty ? "/" : url.path
+    /// Run a mount tool and wait for it, with a cap so an unreachable server
+    /// cannot hang the app.
+    private static func connectDirectly(
+        _ tool: String,
+        url: URL,
+        completion: @escaping (URL?) -> Void
+    ) {
         guard let mountPoint = mountPoint(for: url) else {
             completion(nil)
             return
         }
-
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/sbin/mount_nfs")
-            process.arguments = ["\(host):\(export)", mountPoint.path]
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = [url.absoluteString, mountPoint.path]
             do {
                 try process.run()
             } catch {
@@ -105,7 +115,6 @@ enum Volumes {
                 return
             }
 
-            // An unreachable server can leave mount_nfs waiting; do not hang.
             var waited = 0.0
             while process.isRunning, waited < 15 {
                 Thread.sleep(forTimeInterval: 0.1)
@@ -176,18 +185,29 @@ enum ServerAddress {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        var host = trimmed
+        // A remembered SMB address is stored as `user@host/share`. Split that
+        // off, so picking it from the list only asks for the password.
+        var embeddedUser = user
+        var remainder = trimmed
+        if let at = trimmed.firstIndex(of: "@"), !trimmed[..<at].contains("/") {
+            if embeddedUser.isEmpty {
+                embeddedUser = String(trimmed[..<at])
+            }
+            remainder = String(trimmed[trimmed.index(after: at)...])
+        }
+
+        var host = remainder
         var path = "/"
-        let slash = trimmed.firstIndex(of: "/")
-        if let colon = trimmed.firstIndex(of: ":"),
-           colon < (slash ?? trimmed.endIndex) {
+        let slash = remainder.firstIndex(of: "/")
+        if let colon = remainder.firstIndex(of: ":"),
+           colon < (slash ?? remainder.endIndex) {
             // host:/export — the colon belongs to the host, not to a port.
-            host = String(trimmed[..<colon])
-            let rest = String(trimmed[trimmed.index(after: colon)...])
+            host = String(remainder[..<colon])
+            let rest = String(remainder[remainder.index(after: colon)...])
             path = rest.hasPrefix("/") ? rest : "/" + rest
         } else if let slash {
-            host = String(trimmed[..<slash])
-            path = String(trimmed[slash...])
+            host = String(remainder[..<slash])
+            path = String(remainder[slash...])
         }
         guard !host.isEmpty else { return nil }
         if !path.hasPrefix("/") { path = "/" + path }
@@ -197,7 +217,7 @@ enum ServerAddress {
         components.host = host
         components.path = path
         if scheme == "smb" {
-            let name = user.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = embeddedUser.trimmingCharacters(in: .whitespacesAndNewlines)
             if !name.isEmpty {
                 components.user = name
                 if !password.isEmpty { components.password = password }

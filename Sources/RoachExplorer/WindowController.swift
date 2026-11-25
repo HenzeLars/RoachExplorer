@@ -416,10 +416,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
                     self.present(message: "That address could not be opened.", title: "Could not connect")
                     return
                 }
-                // The mount point is a plain file URL, so the scheme of the
-                // address the user typed is what decides the path.
-                if url.scheme?.lowercased() == "nfs" {
-                    // mount_nfs is synchronous: the volume is there now.
+                // A direct mount comes back as a file URL: the volume is
+                // there now. Anything else arrives later, by notification.
+                if mounted.scheme?.lowercased() == "file" {
                     self.waitingForMount = false
                     self.mountTimeout?.cancel()
                     self.rememberServer(address)
