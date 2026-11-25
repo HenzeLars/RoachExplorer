@@ -70,6 +70,14 @@ final class WindowController: NSWindowController, NSWindowDelegate {
     private var searchGeneration = 0
     /// A view change that is waiting out its debounce before it is written.
     private var folderViewSaveWork: DispatchWorkItem?
+    /// True between "Connect" and the mount notification, with a timeout.
+    private var waitingForMount = false
+    private var mountTimeout: DispatchWorkItem?
+    /// What was mounted before the attempt, so a late notification can be
+    /// recognised and the timeout can still find the new volume.
+    private var mountBaseline: Set<String> = []
+    /// The address to remember once an SMB mount actually arrives.
+    private var pendingServerAddress: String?
 
     init(startingURL: URL?) {
         let settings = SettingsStore.load()
@@ -111,6 +119,44 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         sidebar.onSpringOpen = { [weak self] url in
             self?.show(folder: url)
         }
+        sidebar.onEject = { [weak self] url in
+            self?.ejectVolume(url)
+        }
+
+        // A share mounted by the connect sheet, or one that vanished.
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceCenter.addObserver(
+            forName: NSWorkspace.didMountNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self, self.waitingForMount,
+                  let url = note.userInfo?["NSWorkspaceVolumeURLKey"] as? URL else { return }
+            let path = url.standardizedFileURL.path
+            guard !self.mountBaseline.contains(path) else { return }
+            self.waitingForMount = false
+            self.mountTimeout?.cancel()
+            self.mountTimeout = nil
+            if let pending = self.pendingServerAddress {
+                self.rememberServer(pending)
+                self.pendingServerAddress = nil
+            }
+            self.show(folder: url)
+        }
+        workspaceCenter.addObserver(
+            forName: NSWorkspace.didUnmountNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self,
+                  let url = note.userInfo?["NSWorkspaceVolumeURLKey"] as? URL,
+                  let current = self.currentURL else { return }
+            let gone = url.standardizedFileURL.path
+            let here = current.standardizedFileURL.path
+            if here == gone || here.hasPrefix(gone + "/") {
+                self.show(folder: current, remember: false)
+            }
+        }
         sidebar.onFavoritesChanged = { paths in
             var stored = SettingsStore.load()
             stored.favorites = paths
@@ -130,6 +176,11 @@ final class WindowController: NSWindowController, NSWindowDelegate {
             if let current = self.currentURL {
                 self.scheduleViewSettingsSave(for: current)
             }
+        }
+
+        // The plug in the path bar is the same command, without the menu trip.
+        pathBar.onConnect = { [weak self] in
+            self?.connectToServer(nil)
         }
 
         contentView.addSubview(statusBar)
@@ -346,6 +397,82 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         }
         fileTable.onViewSettingsChange = callback
         statusBar.showsFoldersFirst = fileTable.foldersFirst
+    }
+
+    /// File ▸ Connect to Server… (Cmd+K), and the plug in the path bar. The
+    /// sheet builds the URL; the system does the mounting and the credential
+    /// asking, so nothing sensitive is stored here.
+    @objc func connectToServer(_ sender: Any?) {
+        guard let window else { return }
+        let sheet = ConnectSheet()
+        let recent = SettingsStore.load().recentServers
+        sheet.present(in: window, recent: recent) { [weak self] url, address in
+            guard let self else { return }
+            // Before connecting: a fast mount can beat the notification.
+            self.mountBaseline = Set(Volumes.mounted().map { $0.url.standardizedFileURL.path })
+            self.pendingServerAddress = nil
+            Volumes.connect(url: url) { mounted in
+                guard let mounted else {
+                    self.present(message: "That address could not be opened.", title: "Could not connect")
+                    return
+                }
+                // The mount point is a plain file URL, so the scheme of the
+                // address the user typed is what decides the path.
+                if url.scheme?.lowercased() == "nfs" {
+                    // mount_nfs is synchronous: the volume is there now.
+                    self.waitingForMount = false
+                    self.mountTimeout?.cancel()
+                    self.rememberServer(address)
+                    self.show(folder: mounted)
+                    return
+                }
+                self.pendingServerAddress = address
+                self.waitingForMount = true
+                self.scheduleMountTimeout()
+            }
+        }
+    }
+
+    /// Remember an address that connected. The password is never stored.
+    private func rememberServer(_ address: String) {
+        guard !address.isEmpty else { return }
+        var settings = SettingsStore.load()
+        settings.recentServers = RecentServers.adding(settings.recentServers, address)
+        SettingsStore.save(settings)
+    }
+
+    /// The system has not produced a mount within a few seconds: say so.
+    private func scheduleMountTimeout() {
+        mountTimeout?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.waitingForMount else { return }
+            self.waitingForMount = false
+            self.pendingServerAddress = nil
+            // It may have mounted just after the notification was missed.
+            if let arrived = Volumes.mounted().first(where: {
+                !self.mountBaseline.contains($0.url.standardizedFileURL.path)
+            }) {
+                self.show(folder: arrived.url)
+                return
+            }
+            self.present(
+                message: "The server did not mount. Check the address and try again.",
+                title: "Could not connect"
+            )
+        }
+        mountTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
+    }
+
+    /// Right-click ▸ Eject on a volume row.
+    private func ejectVolume(_ url: URL) {
+        Volumes.eject(url) { [weak self] error in
+            guard let self else { return }
+            if let error {
+                self.present(message: error.localizedDescription, title: "Could not eject")
+            }
+            self.sidebar.refresh()
+        }
     }
 
     @objc func goBack(_ sender: Any?) {
@@ -1433,7 +1560,9 @@ final class WindowController: NSWindowController, NSWindowDelegate {
         guard let values = try? folder.resourceValues(forKeys: keys) else { return nil }
         let bytes = values.volumeAvailableCapacityForImportantUsage
             ?? values.volumeAvailableCapacity.map(Int64.init)
-        guard let bytes, bytes >= 0 else { return nil }
+        // A network mount that cannot answer reports 0; "0 bytes free" would
+        // be a lie, so it is left out like a missing key.
+        guard let bytes, bytes > 0 else { return nil }
         return bytes
     }
 

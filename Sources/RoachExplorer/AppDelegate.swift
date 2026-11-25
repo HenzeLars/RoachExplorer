@@ -135,6 +135,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(WindowController.makeAlias(_:)),
             keyEquivalent: ""
         )
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(
+            withTitle: "Connect to Server…",
+            action: #selector(WindowController.connectToServer(_:)),
+            keyEquivalent: "k"
+        )
 
         // Edit menu. Standard text actions, routed through the responder chain.
         // Undo and Redo cover the app's paste and move, not text typing.

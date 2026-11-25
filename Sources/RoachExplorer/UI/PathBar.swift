@@ -13,6 +13,7 @@ final class PathBar: NSView, NSTextFieldDelegate {
     var onForward: (() -> Void)?
     var onReload: (() -> Void)?
     var onFind: (() -> Void)?
+    var onConnect: (() -> Void)?
     var onUndo: (() -> Void)?
     var onRedo: (() -> Void)?
     /// File URLs dropped on a path segment. `copying` is Option.
@@ -22,6 +23,7 @@ final class PathBar: NSView, NSTextFieldDelegate {
     private let navigationButtons = NSSegmentedControl()
     private let reloadButton = NSSegmentedControl()
     private let searchButton = NSSegmentedControl()
+    private let connectButton = NSSegmentedControl()
     private let historyButtons = NSSegmentedControl()
     private let field = NSTextField(frame: .zero)
     private let segmentScroll = NSScrollView(frame: .zero)
@@ -62,6 +64,8 @@ final class PathBar: NSView, NSTextFieldDelegate {
         reloadButton.setToolTip("Reload", forSegment: 0)
         configurePair(historyButtons, items: [("arrow.uturn.backward", "Undo"), ("arrow.uturn.forward", "Redo")],
                       action: #selector(historyClicked(_:)))
+        configurePair(connectButton, items: [("powerplug", "Connect to Server…")], action: #selector(connectClicked(_:)))
+        connectButton.setToolTip("Connect to Server… (⌘K)", forSegment: 0)
         configurePair(searchButton, items: [("magnifyingglass", "Find")], action: #selector(findClicked(_:)))
         searchButton.setWidth(72, forSegment: 0)
         searchButton.setLabel("Find", forSegment: 0)
@@ -124,6 +128,8 @@ final class PathBar: NSView, NSTextFieldDelegate {
 
     @objc private func findClicked(_ sender: Any?) { onFind?() }
 
+    @objc private func connectClicked(_ sender: Any?) { onConnect?() }
+
     @objc private func navigationClicked(_ sender: NSSegmentedControl) {
         if sender.selectedSegment == 0 { onBack?() }
         if sender.selectedSegment == 1 { onForward?() }
@@ -169,6 +175,8 @@ final class PathBar: NSView, NSTextFieldDelegate {
         // Reload: right-aligned with nav buttons' right edge, row 2.
         let navRightEdge = navigationButtons.frame.maxX
         reloadButton.frame = NSRect(x: navRightEdge - buttonWidth, y: 2, width: buttonWidth, height: 24)
+        // The free slot left of Reload, one button wide.
+        connectButton.frame = NSRect(x: 8, y: 2, width: buttonWidth, height: 24)
         // Undo/Redo sits at the right edge of row 1.
         let actionsX = bounds.width - pairWidth - 8
         historyButtons.frame = NSRect(x: actionsX, y: navY, width: pairWidth, height: buttonHeight)

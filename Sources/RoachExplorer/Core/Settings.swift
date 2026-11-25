@@ -5,11 +5,19 @@ struct Settings: Codable {
     var windowFrame: WindowFrame?
     /// Favorite folder paths. Missing from older files, so decode must not fail.
     var favorites: [String]
+    /// Addresses that connected successfully, most recent first. Never a password.
+    var recentServers: [String]
 
-    init(lastPath: String? = nil, windowFrame: WindowFrame? = nil, favorites: [String] = []) {
+    init(
+        lastPath: String? = nil,
+        windowFrame: WindowFrame? = nil,
+        favorites: [String] = [],
+        recentServers: [String] = []
+    ) {
         self.lastPath = lastPath
         self.windowFrame = windowFrame
         self.favorites = favorites
+        self.recentServers = recentServers
     }
 
     init(from decoder: Decoder) throws {
@@ -17,6 +25,7 @@ struct Settings: Codable {
         lastPath = try container.decodeIfPresent(String.self, forKey: .lastPath)
         windowFrame = try container.decodeIfPresent(WindowFrame.self, forKey: .windowFrame)
         favorites = try container.decodeIfPresent([String].self, forKey: .favorites) ?? []
+        recentServers = try container.decodeIfPresent([String].self, forKey: .recentServers) ?? []
     }
 }
 
@@ -173,5 +182,17 @@ enum SettingsStore {
     static func fetchFolderView(path: String) -> FolderViewSettings? {
         let normalized = (path as NSString).standardizingPath
         return loadFolderViews().first { $0.path == normalized }?.settings
+    }
+}
+
+/// The short list of servers that connected. Pure, so the cap and the
+/// de-duplication can be tested without touching the settings file.
+enum RecentServers {
+    static let limit = 20
+
+    static func adding(_ list: [String], _ address: String, cap: Int = limit) -> [String] {
+        var updated = list.filter { $0 != address }
+        updated.insert(address, at: 0)
+        return Array(updated.prefix(cap))
     }
 }

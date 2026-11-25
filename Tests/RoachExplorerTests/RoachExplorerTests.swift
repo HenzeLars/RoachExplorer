@@ -385,3 +385,73 @@ final class CockroachNameTests: XCTestCase {    func testOffersANameFromTheList(
         XCTAssertGreaterThanOrEqual(number, 2)
     }
 }
+
+/// The connect sheet's address rules, without a window.
+final class ServerAddressTests: XCTestCase {
+    func testNFSHostAndShare() {
+        let url = ServerAddress.url(scheme: "nfs", address: "192.168.1.223/share")
+        XCTAssertEqual(url?.absoluteString, "nfs://192.168.1.223/share")
+    }
+
+    func testNFSColonForm() {
+        let url = ServerAddress.url(scheme: "nfs", address: "192.168.1.223:/export")
+        XCTAssertEqual(url?.absoluteString, "nfs://192.168.1.223/export")
+    }
+
+    func testNFSHostOnlyGetsTheRoot() {
+        let url = ServerAddress.url(scheme: "nfs", address: "nas.local")
+        XCTAssertEqual(url?.absoluteString, "nfs://nas.local/")
+    }
+
+    func testSMBWithCredentials() {
+        let url = ServerAddress.url(scheme: "smb", address: "server/share", user: "lars", password: "secret")
+        XCTAssertEqual(url?.absoluteString, "smb://lars:secret@server/share")
+    }
+
+    func testSMBPasswordWithSpecialsIsEncoded() {
+        let url = ServerAddress.url(scheme: "smb", address: "server/share", user: "lars", password: "p@ss word")
+        XCTAssertEqual(url?.absoluteString, "smb://lars:p%40ss%20word@server/share")
+    }
+
+    func testCredentialsAreIgnoredForNFS() {
+        let url = ServerAddress.url(scheme: "nfs", address: "nas/export", user: "lars", password: "secret")
+        XCTAssertEqual(url?.absoluteString, "nfs://nas/export")
+    }
+
+    func testAnEmptyAddressIsNoURL() {
+        XCTAssertNil(ServerAddress.url(scheme: "smb", address: "   "))
+    }
+}
+
+/// The recent-server list: newest first, no duplicates, capped.
+final class RecentServersTests: XCTestCase {
+    func testANewAddressGoesToTheFront() {
+        let list = RecentServers.adding([], "nas.local/share")
+        XCTAssertEqual(list, ["nas.local/share"])
+    }
+
+    func testTheSameAddressMovesToTheFrontWithoutDuplicating() {
+        let start = RecentServers.adding([], "a")
+        let withB = RecentServers.adding(start, "b")
+        let again = RecentServers.adding(withB, "a")
+        XCTAssertEqual(again, ["a", "b"])
+    }
+
+    func testTheListStopsAtTwenty() {
+        var list: [String] = []
+        for index in 0..<25 {
+            list = RecentServers.adding(list, "host\(index)")
+        }
+        XCTAssertEqual(list.count, 20)
+        XCTAssertEqual(list.first, "host24")
+        XCTAssertEqual(list.last, "host5")
+    }
+
+    func testAnOlderSettingsFileDecodesWithoutTheList() throws {
+        let json = """
+        {"lastPath":"/tmp","favorites":[]}
+        """
+        let settings = try JSONDecoder().decode(Settings.self, from: Data(json.utf8))
+        XCTAssertEqual(settings.recentServers, [])
+    }
+}

@@ -13,6 +13,8 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
     /// A row held under a drag. The window peeks into that folder, so a drop
     /// can be made deeper without a sidebar tree.
     var onSpringOpen: ((URL) -> Void)?
+    /// Eject was asked for on a volume row.
+    var onEject: ((URL) -> Void)?
 
     private let table = SidebarTable()
     private var rows: [Row] = []
@@ -35,6 +37,20 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
             guard let self, row >= 0, row < self.rows.count,
                   case .item(_, _, true, _) = self.rows[row] else { return false }
             return true
+        }
+        table.isVolumeRow = { [weak self] row in
+            guard let self, row >= 0, row < self.rows.count else { return false }
+            return self.rows[row].isVolume
+        }
+        table.canEjectRow = { [weak self] row in
+            guard let self, row >= 0, row < self.rows.count,
+                  case .volume(_, let url, _) = self.rows[row] else { return false }
+            return Volumes.mounted().first { $0.url == url }?.isUnmountable ?? false
+        }
+        table.onEject = { [weak self] row in
+            guard let self, row >= 0, row < self.rows.count,
+                  case .volume(_, let url, _) = self.rows[row] else { return }
+            self.onEject?(url)
         }
         table.doubleAction = nil
         table.target = self
@@ -60,6 +76,29 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
         table.registerForDraggedTypes([.fileURL])
         table.setAccessibilityLabel("Sidebar")
+
+        // A share mounted or ejected elsewhere should show up here at once.
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(
+            forName: NSWorkspace.didMountNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.reloadPlaces()
+        }
+        center.addObserver(
+            forName: NSWorkspace.didUnmountNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.reloadPlaces()
+        }
+
+        reloadPlaces()
+    }
+
+    /// Re-read the places and the mounted volumes.
+    func refresh() {
         reloadPlaces()
     }
 
@@ -103,26 +142,36 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
             field.setAccessibilityLabel(title)
             return field
         case .item(let title, let url, _, let missing):
-            let cell = NSTableCellView()
-            let image = NSImageView(frame: NSRect(x: 8, y: 4, width: 16, height: 16))
-            image.image = missing
-                ? NSImage(systemSymbolName: "questionmark.folder", accessibilityDescription: nil)
-                : NSWorkspace.shared.icon(forFile: url.path)
-            image.image?.size = NSSize(width: 16, height: 16)
-            let label = NSTextField(labelWithString: title)
-            label.font = NSFont.systemFont(ofSize: 12)
-            label.textColor = missing ? .tertiaryLabelColor : .labelColor
-            label.lineBreakMode = .byTruncatingTail
-            label.frame = NSRect(x: 30, y: 3, width: 150, height: 18)
-            label.setAccessibilityLabel(title)
-            cell.addSubview(image)
-            cell.addSubview(label)
-            cell.textField = label
-            cell.imageView = image
-            cell.toolTip = url.path
-            cell.setAccessibilityLabel(title)
-            return cell
+            return makeCell(title: title, url: url, missing: missing, symbol: nil)
+        case .volume(let title, let url, let network):
+            return makeCell(title: title, url: url, missing: false, symbol: network ? "network" : "externaldrive")
         }
+    }
+
+    private func makeCell(title: String, url: URL, missing: Bool, symbol: String?) -> NSView {
+        let cell = NSTableCellView()
+        let image = NSImageView(frame: NSRect(x: 8, y: 4, width: 16, height: 16))
+        if missing {
+            image.image = NSImage(systemSymbolName: "questionmark.folder", accessibilityDescription: nil)
+        } else if let symbol {
+            image.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        } else {
+            image.image = NSWorkspace.shared.icon(forFile: url.path)
+        }
+        image.image?.size = NSSize(width: 16, height: 16)
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: 12)
+        label.textColor = missing ? .tertiaryLabelColor : .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(x: 30, y: 3, width: 150, height: 18)
+        label.setAccessibilityLabel(title)
+        cell.addSubview(image)
+        cell.addSubview(label)
+        cell.textField = label
+        cell.imageView = image
+        cell.toolTip = url.path
+        cell.setAccessibilityLabel(title)
+        return cell
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
@@ -183,8 +232,8 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     @objc private func openClickedRow(_ sender: Any?) {
         let row = table.clickedRow
-        guard row >= 0, row < rows.count, case .item(_, let url, _, let missing) = rows[row] else { return }
-        if missing {
+        guard row >= 0, row < rows.count, let url = rows[row].itemURL else { return }
+        if rows[row].isMissing {
             NSSound.beep()
             return
         }
@@ -214,7 +263,7 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private func folderDestination(row: Int, operation: NSTableView.DropOperation) -> URL? {
         guard operation == .on, row >= 0, row < rows.count,
-              case .item(_, let url, _, let missing) = rows[row], !missing else { return nil }
+              let url = rows[row].itemURL, !rows[row].isMissing else { return nil }
         return DropTarget.folder(resolving: url)
     }
 
@@ -232,7 +281,7 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private func springFolder(at point: NSPoint) -> URL? {
         let row = table.row(at: point)
         guard row >= 0, row < rows.count,
-              case .item(_, let url, _, let missing) = rows[row], !missing,
+              let url = rows[row].itemURL, !rows[row].isMissing,
               let folder = DropTarget.folder(resolving: url) else { return nil }
         // The folder already open: reloading it under the drag does nothing useful.
         if folder.standardizedFileURL.path == currentPath { return nil }
@@ -274,6 +323,13 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
             let title = url.lastPathComponent.isEmpty ? path : url.lastPathComponent
             next.append(.item(title: title, url: url, favorite: true, missing: missing))
         }
+        let volumes = Volumes.sidebarVolumes()
+        if !volumes.isEmpty {
+            next.append(.header("Volumes"))
+            for volume in volumes {
+                next.append(.volume(title: volume.name, url: volume.url, network: volume.isNetwork))
+            }
+        }
         rows = next
         table.reloadData()
         table.tile()
@@ -286,10 +342,8 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
             return
         }
         if let row = rows.firstIndex(where: { row in
-            if case .item(_, let url, _, _) = row {
-                return url.standardizedFileURL.path == currentPath
-            }
-            return false
+            guard let url = row.itemURL else { return false }
+            return url.standardizedFileURL.path == currentPath
         }) {
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             table.scrollRowToVisible(row)
@@ -361,16 +415,38 @@ final class Sidebar: NSView, NSTableViewDataSource, NSTableViewDelegate {
 private enum Row {
     case header(String)
     case item(title: String, url: URL, favorite: Bool, missing: Bool)
+    case volume(title: String, url: URL, network: Bool)
 
     var isHeader: Bool {
         if case .header = self { return true }
         return false
+    }
+
+    var isVolume: Bool {
+        if case .volume = self { return true }
+        return false
+    }
+
+    var isMissing: Bool {
+        if case .item(_, _, _, let missing) = self { return missing }
+        return false
+    }
+
+    var itemURL: URL? {
+        switch self {
+        case .item(_, let url, _, _): return url
+        case .volume(_, let url, _): return url
+        case .header: return nil
+        }
     }
 }
 
 private final class SidebarTable: NSTableView {
     var onRemoveFavorite: ((Int) -> Void)?
     var isFavoriteRow: ((Int) -> Bool)?
+    var isVolumeRow: ((Int) -> Bool)?
+    var canEjectRow: ((Int) -> Bool)?
+    var onEject: ((Int) -> Void)?
     /// Table-space pointer and the dragged files, on every drag step.
     var onDraggingUpdated: ((NSPoint, [URL]) -> Void)?
     var onDraggingExited: (() -> Void)?
@@ -419,16 +495,29 @@ private final class SidebarTable: NSTableView {
 
     override func rightMouseDown(with event: NSEvent) {
         let row = row(at: convert(event.locationInWindow, from: nil))
-        guard row >= 0, isFavoriteRow?(row) == true else { return }
+        guard row >= 0 else { return }
         let menu = NSMenu()
-        let item = menu.addItem(withTitle: "Remove from Sidebar", action: #selector(removeClicked(_:)), keyEquivalent: "")
-        item.tag = row
-        item.target = self
+        if isVolumeRow?(row) == true {
+            let eject = menu.addItem(withTitle: "Eject", action: #selector(ejectClicked(_:)), keyEquivalent: "")
+            eject.tag = row
+            eject.target = self
+            eject.isEnabled = canEjectRow?(row) ?? false
+        } else if isFavoriteRow?(row) == true {
+            let item = menu.addItem(withTitle: "Remove from Sidebar", action: #selector(removeClicked(_:)), keyEquivalent: "")
+            item.tag = row
+            item.target = self
+        } else {
+            return
+        }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
     @objc private func removeClicked(_ sender: NSMenuItem) {
         onRemoveFavorite?(sender.tag)
+    }
+
+    @objc private func ejectClicked(_ sender: NSMenuItem) {
+        onEject?(sender.tag)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
