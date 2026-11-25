@@ -50,6 +50,8 @@ Work in progress. Built and used daily by one person, so it covers the operation
 - Make Alias, in the File menu and the context menu, writes a Finder-style alias next to the item: it keeps following the original when you rename or move it, unlike a symlink.
 - Copy Path with `Option+Cmd+C` puts one path per line on the clipboard, ready for a shell. Nothing selected copies the open folder. Show in Finder and Open in Terminal are in the context menu, for when you want to leave.
 - Find by name with `Cmd+F` or the magnifying-glass **Find** button. It filters the current folder by default; check **Include subfolders** to search recursively.
+- Connect to a server with `Cmd+K`, the plug button in the path bar, or File ▸ **Connect to Server…**. NFS and Windows (SMB) shares mount without a trip through Finder; the sheet builds the address from host, share, username and password. The last 20 successful addresses are kept, with a dropdown and autocomplete — the username comes back, the password never does.
+- Mounted shares, disk images and external disks get a **Volumes** section in the sidebar. Right-click one to eject it; ejecting the open folder leaves you in the nearest folder that still exists.
 - Hold a dragged file over a sidebar row for a moment and the window opens that folder, so a deep destination is two gestures away without a sidebar tree.
 - Drag a selection into Terminal, iTerm, or Warp and get a shell-escaped path: single quotes, embedded quotes handled, one argument per file.
 
@@ -70,6 +72,7 @@ Work in progress. Built and used daily by one person, so it covers the operation
 | Quick Look | `Space`, then `Up` / `Down` |
 | Copy path | `Option+Cmd+C` |
 | Find by name | `Cmd+F` |
+| Connect to server | `Cmd+K` |
 | Back / Forward | `Cmd+[` / `Cmd+]` |
 | Enclosing folder | `Cmd+Up` |
 | Reload | `Cmd+R` |
@@ -158,7 +161,7 @@ Two design decisions worth knowing about:
 
 **The pasteboard is the contract.** Dragging onto a terminal is why the app is native rather than a web view. Terminal.app reads `public.file-url`; iTerm and Warp read the string. The drag writes both, and the string is quoted for a POSIX shell so paths with spaces, quotes, or newlines survive.
 
-**Settings are plain JSON** in `~/.config/roach-explorer/`. `settings.json` holds the last folder, the window frame and favourites; `folderViews.json` holds the per-folder sort, column widths and **Folders first** state, most recently used first and capped at 100. Not Application Support, easy to read and edit.
+**Settings are plain JSON** in `~/.config/roach-explorer/`. `settings.json` holds the last folder, the window frame, favourites and recent servers; `folderViews.json` holds the per-folder sort, column widths and **Folders first** state, most recently used first and capped at 100. Not Application Support, easy to read and edit.
 
 ## Not here
 
