@@ -670,11 +670,19 @@ final class FileTable: NSTableView {
 
     /// Keep the table at least as tall as the clip view, so clicks on the
     /// empty area below the rows land here instead of on the scroll view.
+    /// The rows are not all the same height — a link or a search result has a
+    /// second line — so the height is the sum the table actually reports,
+    /// not `count * rowHeight`, or the last row ends up behind the status bar.
     override func tile() {
         super.tile()
         guard let contentSize = enclosingScrollView?.contentSize else { return }
         let headerHeight = headerView?.frame.height ?? 0
-        let rowsHeight = CGFloat(numberOfRows) * rowHeight
+        let rowsHeight: CGFloat
+        if numberOfRows > 0 {
+            rowsHeight = rect(ofRow: numberOfRows - 1).maxY - rect(ofRow: 0).minY
+        } else {
+            rowsHeight = 0
+        }
         var frame = frame
         frame.size.height = max(rowsHeight + headerHeight, contentSize.height)
         self.frame = frame
