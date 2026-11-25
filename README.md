@@ -42,6 +42,9 @@ Work in progress. Built and used daily by one person, so it covers the operation
 - Name collisions ask Replace, Keep Both, or Skip, with *apply to all* on by default. Nothing is overwritten silently.
 - Long copies and moves run off the main thread with a progress panel, Cancel, and *Decide on collisions now* so a long run does not stop ten minutes later to ask.
 - Cross-volume moves copy first and delete only when the copy has finished cleanly.
+- Compress a selection into a **ZIP** or **TAR** archive — with no compression, gzip, bzip2 or xz — under an editable name. The archive lands in the current folder and is selected when it is ready; a name clash asks the usual Replace / Keep Both / Skip.
+
+![The Compress sheet: pick a format, a compression, and a name](images/compress.png)
 
 **Getting at things**
 
