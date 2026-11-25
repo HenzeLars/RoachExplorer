@@ -434,6 +434,10 @@ final class PathBar: NSView, NSTextFieldDelegate {
 
         guard let context = PathInput.completion(text: text, cursor: cursor, relativeTo: currentURL) else {
             hideCompletion()
+            flash(textView)
+            if let range = PathInput.brokenRange(in: text, relativeTo: currentURL) {
+                mark(range, in: textView)
+            }
             NSSound.beep()
             return
         }
@@ -509,12 +513,27 @@ final class PathBar: NSView, NSTextFieldDelegate {
     private func flash(_ textView: NSTextView) {
         flashToken += 1
         let token = flashToken
-        textView.drawsBackground = true
-        let previous = textView.backgroundColor
-        textView.backgroundColor = NSColor.systemRed.withAlphaComponent(0.45)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak textView] in
-            guard self.flashToken == token else { return }
-            textView?.backgroundColor = previous
+        // An overlay on top of the field, the same trick the row clash-flash uses.
+        // Setting the field editor's backgroundColor is unreliable inside a
+        // bezeled NSTextField, so pulse a layer-backed view instead.
+        let overlay = NSView(frame: field.bounds)
+        overlay.autoresizingMask = [.width, .height]
+        overlay.wantsLayer = true
+        overlay.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.45).cgColor
+        overlay.layer?.cornerRadius = 4
+        overlay.alphaValue = 0
+        field.addSubview(overlay)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            overlay.animator().alphaValue = 1
+        } completionHandler: {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                overlay.animator().alphaValue = 0
+            } completionHandler: {
+                guard self.flashToken == token else { return }
+                overlay.removeFromSuperview()
+            }
         }
     }
 
